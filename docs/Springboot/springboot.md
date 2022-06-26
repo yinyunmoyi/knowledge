@@ -269,11 +269,11 @@ public @interface AutoConfigurationPackage {
 
 的值是：springboot
 
-![QQ图片20200912102358](D:\笔记\springboot\QQ图片20200912102358.png)
+![QQ图片20200912102358](QQ图片20200912102358.png)
 
 而我们的包结构中，启动类所属的包名正是springboot：
 
-![QQ图片20200912102509](D:\笔记\springboot\QQ图片20200912102509.png)
+![QQ图片20200912102509](QQ图片20200912102509.png)
 
 所以@AutoConfigurationPackage会将主配置类所在包的及下面所有子包中的所有组件都扫描到spring容器。
 
@@ -307,11 +307,11 @@ public String[] selectImports(AnnotationMetadata annotationMetadata) {
 
 调试这个方法，发现springboot运行时configurations里面装入的就是要自动添加进容器的组件，这些类都是配置类：
 
-![QQ图片20200912105043](D:\笔记\springboot\QQ图片20200912105043.png)
+![QQ图片20200912105043](QQ图片20200912105043.png)
 
 这些配置都是读取自类路径下的META-INF/spring.factories：
 
-![QQ图片20200912105335](D:\笔记\springboot\QQ图片20200912105335.png)
+![QQ图片20200912105335](QQ图片20200912105335.png)
 
 以前我们需要自己配置的东西，自动配置类都帮我们自动完成了。
 
@@ -353,7 +353,7 @@ public @interface RestController {
 
 在项目的resources下可以设置一个配置文件application.properties：
 
-<img src="D:\笔记\springboot\QQ图片20200912112159.png" alt="QQ图片20200912112159" style="zoom:50%;" />
+<img src="QQ图片20200912112159.png" alt="QQ图片20200912112159" style="zoom:50%;" />
 
 在其中加入：
 
@@ -987,7 +987,7 @@ public class HelloWorld {
 
 slf4j和其他日志框架的关系如下：
 
-![concrete-bindings](D:\笔记\springboot\concrete-bindings.png)
+![concrete-bindings](concrete-bindings.png)
 
 从左到右的图：第一个图表示只使用slf4j不使用日志实现无法完成日志的记录；第二个图代表日志抽象层使用slf4j，日志实现层使用logback；第三、四个图代表有些日志实现层与slf4j没有很好的衔接，此时需要一个中间层来适配才能顺利完成日志输出；第五个图代表日志实现层使用slf4j自带的日志实现；第六个图也是无法完成日志打印的。
 
@@ -995,7 +995,7 @@ slf4j和其他日志框架的关系如下：
 
 在springboot中需要依赖很多框架，其中很多框架的日志打印方式都不一样，但是我们运行springboot时还想要都统一用slf4j来打印，springboot此时是通过下列机制来实现的：
 
-![legacy](D:\笔记\springboot\legacy.png)
+![legacy](legacy.png)
 
 左上角的图，最左边的三个方块的关系代表之前我们提到的，slf4j作为日志抽象层，logback作为日志实现层。但是此时项目中还有其他的日志框架，如commons logging、log4j、java.util.logging，此时我们就需要用jcl-over-slf4j包来替换commons logging包（引入新包，排除旧包），这个jcl-over-slf4j就是一个利用适配原理的一个包，它拥有commons logging对外的全部接口，只不过实现变成了调用slf4j，这样就完成了日志框架的统一，同样的道理，其他日志框架的替换也是采用类似的手段。
 
@@ -1133,7 +1133,7 @@ http://www.webjars.org/
 
 引入项目后，其目录结构：
 
-![搜狗截图20180203181751](D:\笔记\springboot\搜狗截图20180203181751.png)
+![搜狗截图20180203181751](搜狗截图20180203181751.png)
 
 可以在浏览器上直接访问localhost:8080/webjars/jquery/3.3.1/jquery.js即可访问到。
 
@@ -1329,7 +1329,7 @@ public class ResourceProperties {
 
 在后台对各种类型的http请求做好处理之后就面临一个问题，前台的表单提交只有get和post两种，如何能映射到后台的put和delete方法呢，做法是在前台表单method=post，隐藏域 _method=put：
 
-![QQ图片20210912232801](D:\笔记\springboot\QQ图片20210912232801.png)
+![QQ图片20210912232801](QQ图片20210912232801.png)
 
 再开启配置：
 
@@ -1363,7 +1363,7 @@ spring:
 
 根据这样的原理，只要定制一个自己的HiddenHttpMethodFilter，就可以不用_method来标记，而是用自己自定义的值：
 
-![QQ图片20210918230806](D:\笔记\springboot\QQ图片20210918230806.png)
+![QQ图片20210918230806](QQ图片20210918230806.png)
 
 ## 请求映射原理
 
@@ -1393,11 +1393,11 @@ protected void doDispatch(HttpServletRequest request, HttpServletResponse respon
 
 处理器映射会找到能够处理对应请求的处理器，一般项目中有以下几个处理器：
 
-![image](D:\笔记\springboot\image.png)
+![image](image.png)
 
 其中**RequestMappingHandlerMapping**：保存了所有@RequestMapping 和handler的映射规则。
 
-![image (1)](D:\笔记\springboot\image (1).png)
+![image (1)](image (1).png)
 
 所有的请求映射都在HandlerMapping中。
 
@@ -1574,11 +1574,11 @@ public class Pet {
 
 当传入参数比较复杂时，还可以定义解析规则，如要实现下列需求，表单提交一个pet参数，参数值的前半部分被解析为name，后半部解析为age：
 
-![QQ图片20210919223501](D:\笔记\springboot\QQ图片20210919223501.png)
+![QQ图片20210919223501](QQ图片20210919223501.png)
 
 自定义一个WebMvcConfigurer，重写addFormatters方法，完成自定义的转化逻辑：
 
-![QQ图片20210919223333](D:\笔记\springboot\QQ图片20210919223333.png)
+![QQ图片20210919223333](QQ图片20210919223333.png)
 
 ## 参数处理原理
 
@@ -1626,11 +1626,11 @@ WebAsyncTask
 
 底层解析这些返回值的是返回值解析器，下面是springboot默认的所有返回值解析器：
 
-![image (2)](D:\笔记\springboot\image (2).png)
+![image (2)](image (2).png)
 
 返回值解析器有两个关键的方法：返回支持处理的类型、处理返回值：
 
-![image (3)](D:\笔记\springboot\image (3).png)
+![image (3)](image (3).png)
 
 解析的过程：
 
@@ -1646,7 +1646,7 @@ WebAsyncTask
 
 - - - 1、内容协商（浏览器默认会以请求头的方式告诉服务器他能接受什么样的内容类型），如下，请求头中的accept字段（q是优先级）：
 
-      ![image (4)](D:\笔记\springboot\image (4).png)
+      ![image (4)](image (4).png)
 
     - 2、服务器最终根据自己自身的能力，决定服务器能生产出什么样内容类型的数据。和前者对比最后得到结果：类型转化前的结果、类型转化后的结果
 
@@ -1659,7 +1659,7 @@ WebAsyncTask
 
 HTTPMessageConverter消息转化器的方法，关键是能读取什么类型，能转化写为什么类型：
 
-![image (5)](D:\笔记\springboot\image (5).png)
+![image (5)](image (5).png)
 
 HttpMessageConverter: 看是否支持将 此 Class类型的对象，转为MediaType类型的数据。
 
@@ -1667,7 +1667,7 @@ HttpMessageConverter: 看是否支持将 此 Class类型的对象，转为MediaT
 
 springmvc有默认的下列消息转化器：
 
-![image (6)](D:\笔记\springboot\image (6).png)
+![image (6)](image (6).png)
 
 （
 
@@ -1701,7 +1701,7 @@ jackson2XmlPresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.xml.
 
 具体到ResponseBody注解返回一个对象这个例子，最后MappingJackson2HttpMessageConverter  把对象转为JSON（利用底层的jackson的objectMapper转换的），然后写入response返回出去：
 
-![image (7)](D:\笔记\springboot\image (7).png)
+![image (7)](image (7).png)
 
 ## 内容协商
 
@@ -1718,7 +1718,7 @@ jackson2XmlPresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.xml.
 
 比如用postman发送请求，变换不同的accept，请求返回值的格式就不同（application/xml、application/json）：
 
-![image (8)](D:\笔记\springboot\image (8).png)
+![image (8)](image (8).png)
 
 浏览器发送请求的accept一般无法受控制，也就无法修改请求中的accept，这个时候可以通过请求参数来完成不同的内容协商，首先要在配置中开启内容协商：
 
@@ -1744,7 +1744,7 @@ spring:
 
     HeaderContentNegotiationStrategy  确定客户端可以接收的内容类型
 
-    ![image (9)](D:\笔记\springboot\image (9).png)
+    ![image (9)](image (9).png)
 
 
 
@@ -1752,7 +1752,7 @@ spring:
 
 解析完毕后，请求头中的accept就被解析到其中：
 
-![image (10)](D:\笔记\springboot\image (10).png)
+![image (10)](image (10).png)
 
 3、遍历循环所有当前系统的 **MessageConverter**，看谁支持操作这个对象（Person），也就是谁支持读
 
@@ -1760,7 +1760,7 @@ spring:
 
 5、统计结果：客户端需要【application/xml】。服务端能力【10种、json、xml】：
 
-![image (11)](D:\笔记\springboot\image (11).png)
+![image (11)](image (11).png)
 
 6、进行内容协商的最佳匹配媒体类型
 
@@ -1831,7 +1831,7 @@ public class GuiguMessageConverter implements HttpMessageConverter<Person> {
 
 jsp和thymeleaf都是模板引擎，它的作用如下图：
 
-![template-engine](D:\笔记\springboot\template-engine.png)
+![template-engine](template-engine.png)
 
 将模板和数据结合起来生成html，完成与前端的交互。在springboot中无法直接使用jsp，它推荐使用模板引擎thymeleaf。
 
@@ -1930,7 +1930,7 @@ public class HelloController {
 
 在thymeleaf中可以用th：来替换任意html属性，方便的进行数据传递，更多的详细功能如下，和jsp一样，也拥有条件判断、循环遍历的功能：
 
-![2018-02-04_123955](D:\笔记\springboot\2018-02-04_123955.png)
+![2018-02-04_123955](2018-02-04_123955.png)
 
 表达式、内置对象和工具：
 
@@ -2159,7 +2159,7 @@ public class AdminWebConfig implements WebMvcConfigurer {
 
 7、页面成功渲染完成以后，也会倒序触发 afterCompletion
 
-![image (12)](D:\笔记\springboot\image (12).png)
+![image (12)](image (12).png)
 
 ## 文件上传
 
@@ -2565,11 +2565,11 @@ spring-mvc-date-format=yyyy-MM-dd
 
 当在浏览器上访问服务器不存在的页面时会出现：
 
-![搜狗截图20180226173408](D:\笔记\springboot\搜狗截图20180226173408.png)
+![搜狗截图20180226173408](搜狗截图20180226173408.png)
 
 而在postman中模拟http请求访问服务器不存在的资源时会返回一个json：
 
-![搜狗截图20180226173527](D:\笔记\springboot\搜狗截图20180226173527.png)
+![搜狗截图20180226173527](搜狗截图20180226173527.png)
 
 之所以会出现不同的响应是因为仔细观察两者发出的http请求，浏览器发出的请求中的请求头属性中表示接受的返回格式是html：
 
@@ -2750,13 +2750,13 @@ public class MyErrorAttributes extends DefaultErrorAttributes {
 
 加上我们在异常处理器中封装的数据，最后的错误json相应如下：
 
-![搜狗截图20180228135513](D:\笔记\springboot\搜狗截图20180228135513.png)
+![搜狗截图20180228135513](搜狗截图20180228135513.png)
 
 # Servlet容器
 
 SpringBoot默认使用Tomcat作为嵌入式的Servlet容器：
 
-![搜狗截图20180301142915](D:\笔记\springboot\搜狗截图20180301142915.png)
+![搜狗截图20180301142915](搜狗截图20180301142915.png)
 
 ## servlet相关配置
 
@@ -2889,7 +2889,7 @@ public ServletRegistrationBean dispatcherServletRegistration(
 
 从类结构中我们可以发现springboot还支持其他的嵌入式容器：
 
-![搜狗截图20180302114401](D:\笔记\springboot\搜狗截图20180302114401.png)
+![搜狗截图20180302114401](搜狗截图20180302114401.png)
 
 springboot默认的servlet容器是tomcat：
 
@@ -3027,11 +3027,11 @@ public interface EmbeddedServletContainerFactory {
 
 三种自动配置的容器工厂类是它的实现类：
 
-![搜狗截图20180302144835](D:\笔记\springboot\搜狗截图20180302144835.png)
+![搜狗截图20180302144835](搜狗截图20180302144835.png)
 
 而它返回的容器也有三种实现方式：
 
-![搜狗截图20180302144910](D:\笔记\springboot\搜狗截图20180302144910.png)
+![搜狗截图20180302144910](搜狗截图20180302144910.png)
 
 ### 工厂类分析
 
@@ -3707,7 +3707,7 @@ spring:
 
 **JUnit Vintage**: 由于JUint已经发展多年，为了照顾老的项目，JUnit Vintage提供了兼容JUnit4.x,Junit3.x的测试引擎。
 
-![afeae670-6be9-11e9-8b0d-d3a853e66b8e](D:\笔记\springboot\afeae670-6be9-11e9-8b0d-d3a853e66b8e.png)
+![afeae670-6be9-11e9-8b0d-d3a853e66b8e](afeae670-6be9-11e9-8b0d-d3a853e66b8e.png)
 
 注意：
 
@@ -4034,7 +4034,7 @@ static Stream<String> method() {
 
 1.x与2.x的不同：
 
-![image (13)](D:\笔记\springboot\image (13).png)
+![image (13)](image (13).png)
 
 使用方法很简单，就是引入starter，然后配置对应的配置文件：
 
@@ -4124,7 +4124,7 @@ management:
 
 只需要访问http://localhost:8080/actuator/health
 
-![image (14)](D:\笔记\springboot\image (14).png)
+![image (14)](image (14).png)
 
 3、Metrics Endpoint
 
@@ -4136,7 +4136,7 @@ management:
 
 - 添加自定义Metrics或者扩展已有Metrics
 
-![image (15)](D:\笔记\springboot\image (15).png)
+![image (15)](image (15).png)
 
 4、管理endpoint
 
@@ -4333,7 +4333,7 @@ JSR107是java缓存的规范，Java Caching定义了5个核心接口，分别是
 - Entry是一个存储在Cache中的key-value对。
 - Expiry每一个存储在Cache中的条目有一个定义的有效期。一旦超过这个时间，条目为过期的状态。一旦过期，条目将不可访问、更新和删除。缓存有效期可以通过ExpiryPolicy设置。
 
-![QQ图片20211002102118](D:\笔记\springboot\QQ图片20211002102118.png)
+![QQ图片20211002102118](QQ图片20211002102118.png)
 
 Spring从3.1开始定义了org.springframework.cache.Cache，和org.springframework.cache.CacheManager接口来统一不同的缓存技术；并支持使用JCache（JSR-107）注解简化我们开发；
 
@@ -4643,7 +4643,7 @@ public Department getDeptById(Integer id){
 
 两个协议的对比：
 
-![QQ图片20211002212127](D:\笔记\springboot\QQ图片20211002212127.png)
+![QQ图片20211002212127](QQ图片20211002212127.png)
 
 spring本身支持的消息服务：
 
@@ -4659,7 +4659,7 @@ spring-jms提供了对JMS的支持
 AMQP 中的消息路由
 •AMQP 中消息的路由过程和Java 开发者熟悉的JMS 存在一些差别，AMQP 中增加了Exchange和Binding的角色。生产者把消息发布到Exchange 上，消息最终到达队列并被消费者接收，而Binding 决定交换器的消息应该发送到那个队列：
 
-![QQ图片20211002212415](D:\笔记\springboot\QQ图片20211002212415.png)
+![QQ图片20211002212415](QQ图片20211002212415.png)
 
 四种exchange类型：（headers 匹配AMQP 消息的header 而不是路由键，headers 交换器和direct 交换器完全一致，但性能差很多，目前几乎用不到了）
 
@@ -4667,19 +4667,19 @@ AMQP 中的消息路由
 
 消息中的路由键（routing key）如果和Binding 中的binding key 一致，交换器就将消息发到对应的队列中
 
-![QQ图片20211002212626](D:\笔记\springboot\QQ图片20211002212626.png)
+![QQ图片20211002212626](QQ图片20211002212626.png)
 
 2、fanout广播类型：
 
 每个发到fanout 类型交换器的消息都会分到所有绑定的队列上去。fanout 交换器不处理路由键，只是简单的将队列绑定到交换器上，每个发送到交换器的消息都会被转发到与该交换器绑定的所有队列上。很像子网广播，每台子网内的主机都获得了一份复制的消息。fanout 类型转发消息是最快的。
 
-![QQ图片20211002212736](D:\笔记\springboot\QQ图片20211002212736.png)
+![QQ图片20211002212736](QQ图片20211002212736.png)
 
 3、支持通配符的匹配topic
 
 topic 交换器通过模式匹配分配消息的路由键属性，将路由键和某个模式进行匹配，此时队列需要绑定到一个模式上。它将路由键和绑定键的字符串切分成单词，这些单词之间用点隔开。它同样也会识别两个通配符：符号“#”和符号“*”。#匹配0个或多个单词，*匹配一个单词。
 
-![QQ图片20211002212938](D:\笔记\springboot\QQ图片20211002212938.png)
+![QQ图片20211002212938](QQ图片20211002212938.png)
 
 ## RabbitMQ整合
 
@@ -4810,7 +4810,7 @@ Elasticsearch是一个分布式搜索服务，提供Restful API，底层基于Lu
 –文档-表中的记录
 –属性-列
 
-![QQ图片20211003132615](D:\笔记\springboot\QQ图片20211003132615.png)
+![QQ图片20211003132615](QQ图片20211003132615.png)
 
 可以直接通过postman访问单独部署的ES，完成数据的增删改查。
 
@@ -5116,7 +5116,7 @@ public class ScheduledService {
 
 ~~~
 
-![QQ图片20211003154155](D:\笔记\springboot\QQ图片20211003154155.png)
+![QQ图片20211003154155](QQ图片20211003154155.png)
 
 ## 邮件任务
 
@@ -5373,7 +5373,7 @@ http.rememberMe().rememberMeParameter("remeber");
 
 Dubbo是Alibaba开源的分布式服务框架，它最大的特点是按照分层的方式来架构，使用这种方式可以使各个层之间解耦合（或者最大限度地松耦合）。从服务模型的角度来看，Dubbo采用的是一种非常简单的模型，要么是提供方提供服务，要么是消费方消费服务，所以基于这一点可以抽象出服务提供方（Provider）和服务消费方（Consumer）两个角色。
 
-![QQ图片20211004103451](D:\笔记\springboot\QQ图片20211004103451.png)
+![QQ图片20211004103451](QQ图片20211004103451.png)
 
 首先要安装zk和dubbo。我们需要准备两个服务，一个是提供者，一个是消费者。
 
