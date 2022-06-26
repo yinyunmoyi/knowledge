@@ -94,7 +94,7 @@ public class HelloController {
 
 运行后就可以访问localhost:8080/hello就可以看见打印的语句：
 
-![QQ图片20200911205154](D:\笔记\springboot\QQ图片20200911205154.png)
+![QQ图片20200911205154](QQ图片20200911205154.png)
 
 6、以jar包的形式运行：
 
