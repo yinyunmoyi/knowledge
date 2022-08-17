@@ -12,4 +12,4 @@
 
 * [MySQL进阶](./docs/MySQL/mysql小册/MySQL小册.md)
 
-* [操作系统基础](./docs/MySQL/OS/操作系统基础/操作系统基础.md)
+* [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
