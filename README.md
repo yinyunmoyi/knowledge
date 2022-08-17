@@ -9,3 +9,7 @@
 * [汇编语言](./docs/OS/汇编/汇编语言.md)
 
 * [MySQL基础](./MySQL/mysql基础/mysql.md)
+
+* [MySQL进阶](./MySQL/mysql小册/MySQL小册.md)
+
+* [操作系统基础](./MySQL/OS/操作系统基础/操作系统基础.md)
