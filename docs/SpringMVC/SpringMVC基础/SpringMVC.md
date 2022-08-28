@@ -1507,7 +1507,7 @@ DemoInterceptor1 afterCompletion ......
 
 拦截器的执行路径：
 
-![IMG_20220705_220408](IMG_20220705_220408.jpg)
+![QQ图片20220828093923](QQ图片20220828093923.png)
 
 ## @InitBinder
 
