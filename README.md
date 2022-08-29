@@ -22,6 +22,8 @@
 
 * [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
 
+* [Linux基础](./docs/OS/Linux/linux基础.md)
+
 * [Netty](./docs/Netty/Netty基础/Netty.md)
 
 * [Kafka](./docs/Kafka/Kafka基础/Kafka入门.md)
