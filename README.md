@@ -20,6 +20,8 @@
 
 * [MySQL进阶](./docs/MySQL/mysql小册/MySQL小册.md)
 
+* [MySQL实战](./docs/MySQL/mysql实战/MySQL实战.md)
+
 * [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
 
 * [Linux基础](./docs/OS/Linux/linux基础.md)
