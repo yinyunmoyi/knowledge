@@ -1,6 +1,6 @@
 # 基本使用
 
-##Mybatis架构
+## Mybatis架构
 
 从整体上讲，MyBatis 的整体架构可以分为三层：
 
