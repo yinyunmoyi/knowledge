@@ -1,4 +1,4 @@
-# knowledage
+# knowledge
 
 * [JUC](docs/Java/JUC/JUC.md)
 
