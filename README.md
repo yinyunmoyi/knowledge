@@ -26,6 +26,8 @@
 
 * [Redis实战](./docs/Redis/Redis实战/Redis基础.md)
 
+* [Redis设计](./docs/Redis/Redis设计/redis新.md)
+
 * [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
 
 * [Linux基础](./docs/OS/Linux/linux基础.md)
