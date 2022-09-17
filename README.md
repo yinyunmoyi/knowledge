@@ -24,6 +24,8 @@
 
 * [MySQL实战](./docs/MySQL/mysql实战/MySQL实战.md)
 
+* [Redis实战](./docs/Redis/Redis实战/Redis基础.md)
+
 * [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
 
 * [Linux基础](./docs/OS/Linux/linux基础.md)
