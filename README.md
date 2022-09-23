@@ -18,6 +18,14 @@
 
 * [汇编语言](./docs/OS/汇编/汇编语言.md)
 
+* [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
+
+* [计算机组成原理](./docs/OS/计算机组成基础/计算机组成原理.md)
+
+* [Linux基础](./docs/OS/Linux/linux基础.md)
+
+* [软件工程基础](./docs/软件工程/软件工程基础/软件工程.md)
+
 * [MySQL基础](./docs/MySQL/mysql基础/mysql.md)
 
 * [MySQL进阶](./docs/MySQL/mysql小册/MySQL小册.md)
@@ -27,12 +35,6 @@
 * [Redis实战](./docs/Redis/Redis实战/Redis基础.md)
 
 * [Redis设计](./docs/Redis/Redis设计/redis新.md)
-
-* [操作系统基础](./docs/OS/操作系统基础/操作系统基础.md)
-
-* [Linux基础](./docs/OS/Linux/linux基础.md)
-
-* [软件工程基础](./docs/软件工程/软件工程基础/软件工程.md)
 
 * [Netty](./docs/Netty/Netty基础/Netty.md)
 
