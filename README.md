@@ -1,6 +1,12 @@
 # knowledge
 
+* [Java基础](docs/Java/Java基础/Java基础.md)
+
+* [Java新特性](docs/Java/Java新特性/java新特性.md)
+
 * [JUC](docs/Java/JUC/JUC.md)
+
+* [Effective Java](docs/Java/effectiveJava/effectivejava.md)
 
 * [Spring](docs/Spring/Spring基础/Spring.md)
 
