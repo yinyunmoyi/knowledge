@@ -30,7 +30,7 @@
 
 * [Linux基础](./docs/OS/Linux/linux基础.md)
 
-* [Linux问题定位](./docs/OS/Linux问题定位/Linux定位问题.md)
+* [Linux问题定位](./docs/OS/Linux问题定位/linux定位问题.md)
 
 * [软件工程基础](./docs/软件工程/软件工程基础/软件工程.md)
 
