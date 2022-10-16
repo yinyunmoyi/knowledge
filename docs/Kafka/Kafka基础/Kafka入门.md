@@ -399,7 +399,7 @@ try {
 }
 ~~~
 
-Consumer端要设置isolation.level参数的值为read_committed （默认是read_uncommitted）
+Consumer端要设置隔离级别isolation.level参数的值为read_committed （默认是read_uncommitted）
 
 这两个措施都会影响kafka的性能，尤其是事务，在实际使用中，要仔细评估引入事务的开销。
 
