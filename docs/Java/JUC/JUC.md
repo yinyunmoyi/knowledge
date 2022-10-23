@@ -450,6 +450,8 @@ Thread Name= 5 default Formatter = yyyyMMdd HHmm
 
 从输出中可以看出，虽然 Thread-0 已经改变了 formatter 的值，但 Thread-1 默认格式化值与初始化值相同，其他线程也一样。
 
+使用场景：一些线程共享数据的数据，如服务调用中的traceId，用户标识等。
+
 ## 原理
 
 从Thread类 源代码可以看出Thread 类中有一个 threadLocals 和 一个 inheritableThreadLocals 变量：
@@ -525,9 +527,417 @@ static class Entry extends WeakReference<ThreadLocal<?>> {
 
 如果我们的强引用不存在的话，那么 key 就会被回收，也就是会出现我们 value 没被回收，key 被回收，导致 value 永远存在，出现内存泄漏
 
+## ThreadLocal.set()
 
+set方法原理：主要是判断ThreadLocalMap是否存在，然后使用ThreadLocal中的set方法进行数据处理
 
+![QQ图片20221017224608](QQ图片20221017224608.png)
 
+代码如下：
+
+~~~java
+public void set(T value) {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+}
+
+void createMap(Thread t, T firstValue) {
+    t.threadLocals = new ThreadLocalMap(this, firstValue);
+}
+~~~
+
+### ThreadLocalMap Hash 算法
+
+ThreadLocalMap也是Map结构，也要实现自己的hash算法来解决散列表数组冲突问题：
+
+~~~java
+int i = key.threadLocalHashCode & (len-1);
+~~~
+
+这里最关键的就是threadLocalHashCode值的计算，ThreadLocal中有一个属性为HASH_INCREMENT = 0x61c88647：
+
+~~~java
+public class ThreadLocal<T> {
+    private final int threadLocalHashCode = nextHashCode();
+
+    private static AtomicInteger nextHashCode = new AtomicInteger();
+
+    private static final int HASH_INCREMENT = 0x61c88647;
+
+    private static int nextHashCode() {
+        return nextHashCode.getAndAdd(HASH_INCREMENT);
+    }
+
+    static class ThreadLocalMap {
+        ThreadLocalMap(ThreadLocal<?> firstKey, Object firstValue) {
+            table = new Entry[INITIAL_CAPACITY];
+            int i = firstKey.threadLocalHashCode & (INITIAL_CAPACITY - 1);
+
+            table[i] = new Entry(firstKey, firstValue);
+            size = 1;
+            setThreshold(INITIAL_CAPACITY);
+        }
+    }
+}
+~~~
+
+每当创建一个ThreadLocal对象，这个ThreadLocal.nextHashCode 这个值就会增长 0x61c88647，然后以增长后的值作为hashcode计算。
+
+这个值很特殊，它是斐波那契数 也叫 黄金分割数。hash增量为 这个数字，带来的好处就是 hash 分布非常均匀
+
+### ThreadLocalMap Hash 冲突
+
+虽然ThreadLocalMap中使用了黄金分割数来作为hash计算因子，大大减少了Hash冲突的概率，但是仍然会存在冲突。
+
+HashMap中解决冲突的方法是在数组上构造一个链表结构，冲突的数据挂载到链表上，如果链表长度超过一定数量则会转化成红黑树。
+
+而 ThreadLocalMap 中并没有链表结构，所以这里不能使用 HashMap 解决冲突的方式了。
+
+下面所有示例图中，绿色块Entry代表正常数据，灰色块代表Entry的key值为null，已被垃圾回收。白色块表示Entry为null
+
+如上图所示，如果我们插入一个value=27的数据，通过 hash 计算后应该落入槽位 4 中，而槽位 4 已经有了 Entry 数据：
+
+![QQ图片20221017231520](QQ图片20221017231520.png)
+
+此时就会线性向后查找，一直找到 Entry 为 null 的槽位才会停止查找，将当前元素放入此槽位中。当然迭代过程中还有其他的情况，比如遇到了 Entry 不为 null 且 key 值相等的情况，还有 Entry 中的 key 值为 null 的情况等等都会有不同的处理，后面会一一讲解。
+
+图中还有一个Entry中的key为null的数据（Entry=2 的灰色块数据），因为key值是弱引用类型，所以会有这种数据存在。在set过程中，如果遇到了key过期的Entry数据，实际上是会进行一轮探测式清理操作的。
+
+### set原理
+
+set方法的源码：
+
+~~~java
+private void set(ThreadLocal<?> key, Object value) {
+    Entry[] tab = table;
+    int len = tab.length;
+    int i = key.threadLocalHashCode & (len-1);
+
+    for (Entry e = tab[i];
+         e != null;
+         e = tab[i = nextIndex(i, len)]) {
+        ThreadLocal<?> k = e.get();
+
+        if (k == key) {
+            e.value = value;
+            return;
+        }
+
+        if (k == null) {
+            replaceStaleEntry(key, value, i);
+            return;
+        }
+    }
+
+    tab[i] = new Entry(key, value);
+    int sz = ++size;
+    if (!cleanSomeSlots(i, sz) && sz >= threshold)
+        rehash();
+}
+~~~
+
+for循环向后遍历的过程中，nextIndex()、prevIndex()方法实现：
+
+![QQ图片20221018233906](QQ图片20221018233906.png)
+
+for循环中的逻辑：
+
+* 遍历当前key值对应的桶中Entry数据为空，这说明散列数组这里没有数据冲突，跳出for循环，直接set数据到对应的桶中
+* 如果key值对应的桶中Entry数据不为空
+  * 如果k = key，说明当前set操作是一个替换操作，做替换逻辑，直接返回
+  * 如果key = null，说明当前桶位置的Entry是过期数据，执行replaceStaleEntry()方法(核心方法)，然后返回
+* for循环执行完毕，继续往下执行说明向后迭代的过程中遇到了entry为null的情况
+  * 在Entry为null的桶中创建一个新的Entry对象
+  * 执行++size操作
+* 调用cleanSomeSlots()做一次启发式清理工作，清理散列数组中Entry的key过期的数据
+  * 如果清理工作完成后，未清理到任何数据，且size超过了阈值(数组长度的 2/3)，进行rehash()操作
+  * rehash()中会先进行一轮探测式清理，清理过期key，清理完成后如果size >= threshold - threshold / 4，就会执行真正的扩容逻辑
+
+replaceStaleEntry()方法提供替换过期数据的功能，具体代码如下：
+
+~~~java
+private void replaceStaleEntry(ThreadLocal<?> key, Object value,
+                                       int staleSlot) {
+    Entry[] tab = table;
+    int len = tab.length;
+    Entry e;
+
+    int slotToExpunge = staleSlot;
+    for (int i = prevIndex(staleSlot, len);
+         (e = tab[i]) != null;
+         i = prevIndex(i, len))
+
+        if (e.get() == null)
+            slotToExpunge = i;
+
+    for (int i = nextIndex(staleSlot, len);
+         (e = tab[i]) != null;
+         i = nextIndex(i, len)) {
+
+        ThreadLocal<?> k = e.get();
+
+        if (k == key) {
+            e.value = value;
+
+            tab[i] = tab[staleSlot];
+            tab[staleSlot] = e;
+
+            if (slotToExpunge == staleSlot)
+                slotToExpunge = i;
+            cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
+            return;
+        }
+
+        if (k == null && slotToExpunge == staleSlot)
+            slotToExpunge = i;
+    }
+
+    tab[staleSlot].value = null;
+    tab[staleSlot] = new Entry(key, value);
+
+    if (slotToExpunge != staleSlot)
+        cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
+}
+~~~
+
+首先会向前遍历，找有没有entry为null的，entry为null说明是过期的值，如果有就给slotToExpunge赋值
+
+暗黑向后遍历，有没有entry和要更新的key相同的，如果有，则就更新那个entry，并把它挪到staleSlot位置上。如set value是27的时候，计算得到下标是4，但是4已经有值了，于是就往后遍历，遍历到7发现key为null，则触发replaceStaleEntry，向后遍历的时候如果找到key值相同的，例如索引8的key和入参相同：
+
+![QQ图片20221019194238](QQ图片20221019194238.png)
+
+就会将8的值挪到7位置，并更新它的value：
+
+![QQ图片20221019194328](QQ图片20221019194328.png)
+
+然后调用cleanSomeSlots(expungeStaleEntry(slotToExpunge), len)，触发过期key的清理动作
+
+如果向后找的时候，没有找到key相同的，就直接创建数据，放到staleSlot中：
+
+![QQ图片20221019194524](QQ图片20221019194524.png)
+
+如果slotToExpunge == staleSlot，这说明replaceStaleEntry()一开始向前查找过期数据时并未找到过期的Entry数据，接着向后查找过程中也未发现过期数据，修改开始探测式清理过期数据的下标为当前循环的 index，即slotToExpunge = i。最后调用cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);进行启发式过期数据清理。
+
+最后的if意思是：判断除了staleSlot以外，还发现了其他过期的slot数据，就要开启清理数据的逻辑
+
+## 探测式清理流程
+
+探测式清理，也就是expungeStaleEntry方法，遍历散列数组，从开始位置向后探测清理过期数据，将过期数据的Entry设置为null，沿途中碰到未过期的数据则将此数据rehash后重新在table数组中定位，如果定位的位置已经有了数据，则会将未过期的数据放到最靠近此位置的Entry=null的桶中，使rehash后的Entry数据距离正确的桶的位置更近一些。具体源代码：
+
+~~~java
+private int expungeStaleEntry(int staleSlot) {
+    Entry[] tab = table;
+    int len = tab.length;
+
+    tab[staleSlot].value = null;
+    tab[staleSlot] = null;
+    size--;
+
+    Entry e;
+    int i;
+    for (i = nextIndex(staleSlot, len);
+         (e = tab[i]) != null;
+         i = nextIndex(i, len)) {
+        ThreadLocal<?> k = e.get();
+        if (k == null) {
+            e.value = null;
+            tab[i] = null;
+            size--;
+        } else {
+            int h = k.threadLocalHashCode & (len - 1);
+            if (h != i) {
+                tab[i] = null;
+
+                while (tab[h] != null)
+                    h = nextIndex(h, len);
+                tab[h] = e;
+            }
+        }
+    }
+    return i;
+}
+~~~
+
+## 启发式清理流程
+
+探测式清理是以当前Entry 往后清理，遇到值为null则结束清理，属于线性探测清理。
+
+启发式清理是cleanSomeSlots方法，初始值n是数组长度，每次循环>>>1，直到其变为0为之。每次如果发现对应位置有key为null的，以对应位置为起点再触发一次探测式清理：
+
+~~~java
+private boolean cleanSomeSlots(int i, int n) {
+    boolean removed = false;
+    Entry[] tab = table;
+    int len = tab.length;
+    do {
+        i = nextIndex(i, len);
+        Entry e = tab[i];
+        if (e != null && e.get() == null) {
+            n = len;
+            removed = true;
+            i = expungeStaleEntry(i);
+        }
+    } while ( (n >>>= 1) != 0);
+    return removed;
+}
+~~~
+
+## 扩容机制
+
+在ThreadLocalMap.set()方法的最后，如果执行完启发式清理工作后，未清理到任何数据，且当前散列数组中Entry的数量已经达到了列表的扩容阈值(len*2/3)，就开始执行rehash()逻辑：
+
+~~~java
+if (!cleanSomeSlots(i, sz) && sz >= threshold)
+    rehash();
+~~~
+
+具体实现：
+
+~~~java
+private void rehash() {
+    expungeStaleEntries();
+
+    if (size >= threshold - threshold / 4)
+        resize();
+}
+
+private void expungeStaleEntries() {
+    Entry[] tab = table;
+    int len = tab.length;
+    for (int j = 0; j < len; j++) {
+        Entry e = tab[j];
+        if (e != null && e.get() == null)
+            expungeStaleEntry(j);
+    }
+}
+~~~
+
+这里首先是会进行探测式清理工作，从table的起始位置往后清理。清理完成之后，table中可能有一些key为null的Entry数据被清理掉，所以此时通过判断size >= threshold - threshold / 4 也就是size >= threshold * 3/4 来决定是否扩容。
+
+resize方法中会进行具体的扩容，扩容后的tab的大小为oldLen * 2，然后遍历老的散列表，重新计算hash位置，然后放到新的tab数组中，如果出现hash冲突则往后寻找最近的entry为null的槽位，遍历完成之后，oldTab中所有的entry数据都已经放入到新的tab中了。重新计算tab下次扩容的阈值，具体代码如下：
+
+~~~java
+private void resize() {
+    Entry[] oldTab = table;
+    int oldLen = oldTab.length;
+    int newLen = oldLen * 2;
+    Entry[] newTab = new Entry[newLen];
+    int count = 0;
+
+    for (int j = 0; j < oldLen; ++j) {
+        Entry e = oldTab[j];
+        if (e != null) {
+            ThreadLocal<?> k = e.get();
+            if (k == null) {
+                e.value = null;
+            } else {
+                int h = k.threadLocalHashCode & (newLen - 1);
+                while (newTab[h] != null)
+                    h = nextIndex(h, newLen);
+                newTab[h] = e;
+                count++;
+            }
+        }
+    }
+
+    setThreshold(newLen);
+    size = count;
+    table = newTab;
+}
+~~~
+
+## ThreadLocalMap.get()
+
+分两种情况讨论：
+
+* 通过查找key值计算出散列表中slot位置，然后该slot位置中的Entry.key和查找的key一致，则直接返回
+* slot位置中的Entry.key和要查找的key不一致，向后遍历，遍历过程中遇到key为null的值就触发探测式清理，直到遍历到为之
+
+~~~java
+private Entry getEntry(ThreadLocal<?> key) {
+    int i = key.threadLocalHashCode & (table.length - 1);
+    Entry e = table[i];
+    if (e != null && e.get() == key)
+        return e;
+    else
+        return getEntryAfterMiss(key, i, e);
+}
+
+private Entry getEntryAfterMiss(ThreadLocal<?> key, int i, Entry e) {
+    Entry[] tab = table;
+    int len = tab.length;
+
+    while (e != null) {
+        ThreadLocal<?> k = e.get();
+        if (k == key)
+            return e;
+        if (k == null)
+            expungeStaleEntry(i);
+        else
+            i = nextIndex(i, len);
+        e = tab[i];
+    }
+    return null;
+}
+~~~
+
+## InheritableThreadLocal
+
+使用ThreadLocal的时候，在异步场景下是无法给子线程共享父线程中创建的线程副本数据的。
+
+可以使用InheritableThreadLocal类：
+
+~~~java
+public class InheritableThreadLocalDemo {
+    public static void main(String[] args) {
+        ThreadLocal<String> ThreadLocal = new ThreadLocal<>();
+        ThreadLocal<String> inheritableThreadLocal = new InheritableThreadLocal<>();
+        ThreadLocal.set("父类数据:threadLocal");
+        inheritableThreadLocal.set("父类数据:inheritableThreadLocal");
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                System.out.println("子线程获取父类ThreadLocal数据：" + ThreadLocal.get());
+                System.out.println("子线程获取父类inheritableThreadLocal数据：" + inheritableThreadLocal.get());
+            }
+        }).start();
+    }
+}
+~~~
+
+打印结果：
+
+~~~
+子线程获取父类ThreadLocal数据：null
+子线程获取父类inheritableThreadLocal数据：父类数据:inheritableThreadLocal
+~~~
+
+原理是创建线程的时候，init方法中，拷贝父线程inheritableThreadLocals数据到子线程inheritableThreadLocals中：
+
+~~~java
+private void init(ThreadGroup g, Runnable target, String name,
+                      long stackSize, AccessControlContext acc,
+                      boolean inheritThreadLocals) {
+    if (name == null) {
+        throw new NullPointerException("name cannot be null");
+    }
+
+    if (inheritThreadLocals && parent.inheritableThreadLocals != null)
+        this.inheritableThreadLocals =
+            ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
+    this.stackSize = stackSize;
+    tid = nextThreadID();
+}
+~~~
+
+但InheritableThreadLocal仍然有缺陷，一般我们做异步化处理都是使用的线程池，而InheritableThreadLocal是在new Thread中的init()方法给赋值的，而线程池是线程复用的逻辑，所以这里会存在问题。
+
+当然，有问题出现就会有解决问题的方案，阿里巴巴开源了一个TransmittableThreadLocal组件就可以解决这个问题
 
 # 指令重排序
 
@@ -1620,7 +2030,7 @@ try {   //第1个try块
 
 公平锁：不论此时有没有线程持有该锁，新来获取这个锁的线程都会被放到等待队列中统一排队等待
 
-非公平锁：没有线程持有锁的情况下新来的线程可能会先于等待队列中的线程获取到锁
+非公平锁：没有线程持有锁的情况下新来的线程可能会先于等待队列中的线程获取到锁。当线程要获取锁时，先通过两次 CAS 操作去抢锁，如果没抢到，当前线程再加入到队列中等待唤醒。
 
 非公平锁在性能上的优势：如果一个线程因为获取不到锁而阻塞的话，它可能被操作系统给挂起，也就是从内存中踢出去放到硬盘上，如果要重新恢复这个线程的话需要从硬盘中重新读取进来，这样就造成了性能的损耗，而如果直接把锁分配给新来的线程，在新来的线程执行的过程中再叫醒等待队列的线程，那么可能新来的线程已经执行完它的任务把锁都释放了，正好把锁交给刚醒来的线程
 
@@ -1758,6 +2168,8 @@ synchronized 和 ReentrantLock 的区别：
 
 ## 原子类型
 
+### 基本类型原子类
+
 根据CAS的原理，java中定义了很多原子变量类，这些类提供一些方法，可以用原子的方式去更新某种类型的变量
 
 可以用原子的方式更新基本数据类型数据，定义了下边这么3个类：AtomicBoolean、AtomicInteger、AtomicLong
@@ -1771,7 +2183,17 @@ synchronized 和 ReentrantLock 的区别：
 * AtomicInteger(int initialValue)：指定对象代表的int值
 * AtomicInteger()：默认的初始值为0
 
-常用方法：get、set、compareAndSet、getAndSet、getAndAdd、addAndGet、getAndIncrement、incrementAndGet
+常用方法：
+
+~~~java
+public final int get() //获取当前的值
+public final int getAndSet(int newValue)//获取当前的值，并设置新的值
+public final int getAndIncrement()//获取当前的值，并自增
+public final int getAndDecrement() //获取当前的值，并自减
+public final int getAndAdd(int delta) //获取当前的值，并加上预期的值
+boolean compareAndSet(int expect, int update) //如果输入的数值等于预期值，则以原子方式将该值设置为输入值（update）
+public final void lazySet(int newValue)//最终设置为newValue,使用 lazySet 设置之后可能导致其他线程在之后的一小段时间内还是可以读到旧的值。
+~~~
 
 其中compareAndSet是直接调用的native方法实现的，而getAndIncrement是基于compareAndSet实现的：
 
@@ -1789,15 +2211,213 @@ public final int getAndIncrement() {
 
 基本思路就是失败了不断重试，直到成功了为止
 
+它底层源码是依赖Unsafe的：
+
+~~~java
+    // setup to use Unsafe.compareAndSwapInt for updates（更新操作时提供“比较并替换”的作用）
+    private static final Unsafe unsafe = Unsafe.getUnsafe();
+    private static final long valueOffset;
+
+    static {
+        try {
+            valueOffset = unsafe.objectFieldOffset
+                (AtomicInteger.class.getDeclaredField("value"));
+        } catch (Exception ex) { throw new Error(ex); }
+    }
+
+    private volatile int value;
+~~~
+
+AtomicInteger 类主要利用 CAS (compare and swap) + volatile 和 native 方法来保证原子操作，从而避免 synchronized 的高开销，执行效率大为提升。
+
+CAS 的原理是拿期望的值和原本的一个值作比较，如果相同则更新成新的值。UnSafe 类的 objectFieldOffset() 方法是一个本地方法，这个方法是用来拿到“原来的值”的内存地址。另外 value 是一个 volatile 变量，在内存中可见，因此 JVM 可以保证任何时刻任何线程总能拿到该变量的最新值。CAS也是依赖Unsafe的compareAndSwap方法。
+
 除了原子基本类型以外，还有：
 
-* 原子更新数组：可以通过原子的方式更新某个数组里的某个元素
+* 原子更新数组：可以通过原子的方式更新某个数组里的某个元素，包括AtomicIntegerArray、AtomicLongArray、AtomicReferenceArray 
 * 原子更新引用类型：可以通过原子的方式更新某个引用类型的变量，例如atomicReference.compareAndSet(myObj, new MyObj(6))
 * 原子更新字段类：可以通过原子的方式更新某个对象中的字段，如int型字段、long字段等，都有对应的类
 
 
+### 数组类型原子类
 
-## CAS实现非阻塞链表
+使用原子的方式更新数组里的某个元素：
+
+* AtomicIntegerArray：整形数组原子类
+* AtomicLongArray：长整形数组原子类
+* AtomicReferenceArray ：引用类型数组原子类
+
+以 AtomicIntegerArray 为例子来介绍，它的常用方法有：
+
+~~~java
+public final int get(int i) //获取 index=i 位置元素的值
+public final int getAndSet(int i, int newValue)//返回 index=i 位置的当前的值，并将其设置为新值：newValue
+public final int getAndIncrement(int i)//获取 index=i 位置元素的值，并让该位置的元素自增
+public final int getAndDecrement(int i) //获取 index=i 位置元素的值，并让该位置的元素自减
+public final int getAndAdd(int i, int delta) //获取 index=i 位置元素的值，并加上预期的值
+boolean compareAndSet(int i, int expect, int update) //如果输入的数值等于预期值，则以原子方式将 index=i 位置的元素值设置为输入值（update）
+public final void lazySet(int i, int newValue)//最终 将index=i 位置的元素设置为newValue,使用 lazySet 设置之后可能导致其他线程在之后的一小段时间内还是可以读到旧的值。
+~~~
+
+使用样例：
+
+~~~java
+public class AtomicIntegerArrayTest {
+    public static void main(String[] args) {
+        // TODO Auto-generated method stub
+        int temvalue = 0;
+        int[] nums = { 1, 2, 3, 4, 5, 6 };
+        AtomicIntegerArray i = new AtomicIntegerArray(nums);
+        for (int j = 0; j < nums.length; j++) {
+            System.out.println(i.get(j));
+        }
+        temvalue = i.getAndSet(0, 2);
+        System.out.println("temvalue:" + temvalue + ";  i:" + i);
+        temvalue = i.getAndIncrement(0);
+        System.out.println("temvalue:" + temvalue + ";  i:" + i);
+        temvalue = i.getAndAdd(0, 5);
+        System.out.println("temvalue:" + temvalue + ";  i:" + i);
+    }
+}
+~~~
+
+### 引用类型原子类
+
+分为
+
+- AtomicReference：引用类型原子类
+- AtomicMarkableReference：原子更新带有标记的引用类型。该类将 boolean 标记与引用关联起来，也可以降低出现 ABA 问题的概率。（它的版本号只有两个，true和false）
+- AtomicStampedReference ：原子更新带有版本号的引用类型。该类将整数值与引用关联起来，可用于解决原子的更新数据和数据的版本号，可以解决使用 CAS 进行原子更新时可能出现的 ABA 问题。以下几种：
+
+AtomicReference使用示例：
+
+~~~java
+public static void main(String[] args) {
+    AtomicReference<Person> ar = new AtomicReference<Person>();
+    Person person = new Person("SnailClimb", 22);
+    ar.set(person);
+    Person updatePerson = new Person("Daisy", 20);
+    ar.compareAndSet(person, updatePerson);
+
+    System.out.println(ar.get().getName());
+    System.out.println(ar.get().getAge());
+}
+~~~
+
+AtomicStampedReference 类使用示例：
+
+~~~java
+public static void main(String[] args) {
+        // 实例化、取当前值和 stamp 值
+        final Integer initialRef = 0, initialStamp = 0;
+        final AtomicStampedReference<Integer> asr = new AtomicStampedReference<>(initialRef, initialStamp);
+        System.out.println("currentValue=" + asr.getReference() + ", currentStamp=" + asr.getStamp());
+
+        // compare and set
+        final Integer newReference = 666, newStamp = 999;
+        final boolean casResult = asr.compareAndSet(initialRef, newReference, initialStamp, newStamp);
+        System.out.println("currentValue=" + asr.getReference()
+                + ", currentStamp=" + asr.getStamp()
+                + ", casResult=" + casResult);
+
+        // 获取当前的值和当前的 stamp 值
+        int[] arr = new int[1];
+        final Integer currentValue = asr.get(arr);
+        final int currentStamp = arr[0];
+        System.out.println("currentValue=" + currentValue + ", currentStamp=" + currentStamp);
+
+        // 单独设置 stamp 值
+        final boolean attemptStampResult = asr.attemptStamp(newReference, 88);
+        System.out.println("currentValue=" + asr.getReference()
+                + ", currentStamp=" + asr.getStamp()
+                + ", attemptStampResult=" + attemptStampResult);
+
+        // 重新设置当前值和 stamp 值
+        asr.set(initialRef, initialStamp);
+        System.out.println("currentValue=" + asr.getReference() + ", currentStamp=" + asr.getStamp());
+
+        // [不推荐使用，除非搞清楚注释的意思了] weak compare and set
+        // 困惑！weakCompareAndSet 这个方法最终还是调用 compareAndSet 方法。[版本: jdk-8u191]
+        // 但是注释上写着 "May fail spuriously and does not provide ordering guarantees,
+        // so is only rarely an appropriate alternative to compareAndSet."
+        // todo 感觉有可能是 jvm 通过方法名在 native 方法里面做了转发
+        final boolean wCasResult = asr.weakCompareAndSet(initialRef, newReference, initialStamp, newStamp);
+        System.out.println("currentValue=" + asr.getReference()
+                + ", currentStamp=" + asr.getStamp()
+                + ", wCasResult=" + wCasResult);
+    }
+~~~
+
+AtomicMarkableReference 类使用示例：
+
+~~~java
+    public static void main(String[] args) {
+        // 实例化、取当前值和 mark 值
+        final Boolean initialRef = null, initialMark = false;
+        final AtomicMarkableReference<Boolean> amr = new AtomicMarkableReference<>(initialRef, initialMark);
+        System.out.println("currentValue=" + amr.getReference() + ", currentMark=" + amr.isMarked());
+
+        // compare and set
+        final Boolean newReference1 = true, newMark1 = true;
+        final boolean casResult = amr.compareAndSet(initialRef, newReference1, initialMark, newMark1);
+        System.out.println("currentValue=" + amr.getReference()
+                + ", currentMark=" + amr.isMarked()
+                + ", casResult=" + casResult);
+
+        // 获取当前的值和当前的 mark 值
+        boolean[] arr = new boolean[1];
+        final Boolean currentValue = amr.get(arr);
+        final boolean currentMark = arr[0];
+        System.out.println("currentValue=" + currentValue + ", currentMark=" + currentMark);
+
+        // 单独设置 mark 值
+        final boolean attemptMarkResult = amr.attemptMark(newReference1, false);
+        System.out.println("currentValue=" + amr.getReference()
+                + ", currentMark=" + amr.isMarked()
+                + ", attemptMarkResult=" + attemptMarkResult);
+
+        // 重新设置当前值和 mark 值
+        amr.set(initialRef, initialMark);
+        System.out.println("currentValue=" + amr.getReference() + ", currentMark=" + amr.isMarked());
+
+        // [不推荐使用，除非搞清楚注释的意思了] weak compare and set
+        // 困惑！weakCompareAndSet 这个方法最终还是调用 compareAndSet 方法。[版本: jdk-8u191]
+        // 但是注释上写着 "May fail spuriously and does not provide ordering guarantees,
+        // so is only rarely an appropriate alternative to compareAndSet."
+        // todo 感觉有可能是 jvm 通过方法名在 native 方法里面做了转发
+        final boolean wCasResult = amr.weakCompareAndSet(initialRef, newReference1, initialMark, newMark1);
+        System.out.println("currentValue=" + amr.getReference()
+                + ", currentMark=" + amr.isMarked()
+                + ", wCasResult=" + wCasResult);
+    }
+~~~
+
+### 对象的属性修改类型原子类
+
+如果需要原子更新某个类里的某个字段时，需要用到对象的属性修改类型原子类。
+
+- AtomicIntegerFieldUpdater:原子更新整形字段的更新器
+- AtomicLongFieldUpdater：原子更新长整形字段的更新器
+- AtomicReferenceFieldUpdater ：原子更新引用类型里的字段的更新器
+
+要想原子地更新对象的属性需要两步。第一步，因为对象的属性修改类型原子类都是抽象类，所以每次使用都必须使用静态方法 newUpdater()创建一个更新器，并且需要设置想要更新的类和属性。第二步，更新的对象属性必须使用 public volatile 修饰符。
+
+以AtomicIntegerFieldUpdater为例：
+
+~~~java
+    public static void main(String[] args) {
+        AtomicIntegerFieldUpdater<User> a = AtomicIntegerFieldUpdater.newUpdater(User.class, "age");
+
+        User user = new User("Java", 22);
+        System.out.println(a.getAndIncrement(user));// 22
+        System.out.println(a.get(user));// 23
+    }
+~~~
+
+
+
+
+## CAS实非阻塞链表
 
 如果一个原子性操作中要更新多个变量的值，CAS就会显得不那么方便，但有的时候我们还可以用一些小技巧来保证更新多个变量的过程是原子性的
 
@@ -1907,7 +2527,9 @@ public class Node<E> {
 
 ## 同步状态
 
-AbstractQueuedSynchronizer是一个抽象类，简称AQS，抽象队列同步器。用它可以方便的实现自定义的同步工具，ReentrantLock的底层就是AQS
+AbstractQueuedSynchronizer是一个抽象类，简称AQS，抽象队列同步器。用它可以方便的实现自定义的同步工具，ReentrantLock的底层就是AQS。
+
+Semaphore，其他的诸如 ReentrantReadWriteLock，SynchronousQueue，FutureTask(jdk1.7) 等等皆是基于 AQS 的
 
 在AQS中维护了一个名叫state的字段，是由volatile修饰的，它就是所谓的同步状态：
 
@@ -1972,14 +2594,6 @@ public class Sync extends AbstractQueuedSynchronizer {
 ~~~
 
 尝试获取同步状态，这里就是尝试用CAS的方式将state设置为1；尝试释放同步状态，就是将state设置为0；判断当前线程是否获取到同步状态就是判断state是否为1。不同的自定义同步器争用共享资源的方式也不同。自定义同步器在实现时只需要实现共享资源 state 的获取与释放方式即可，至于具体线程等待队列的维护（如获取资源失败入队/唤醒出队等），AQS 已经在顶层实现好了。
-
-
-
-
-
-
-
-
 
 ## 同步队列
 
@@ -2687,6 +3301,113 @@ try {
 
 这样全部线程都从等待状态中恢复了过来，可以重新竞争锁进行下一步操作了。
 
+## 公平锁和非公平锁的实现
+
+ReentrantLock 默认采用非公平锁，因为考虑获得更好的性能，通过 boolean 来决定是否用公平锁（传入 true 用公平锁）：
+
+~~~java
+/** Synchronizer providing all implementation mechanics */
+private final Sync sync;
+public ReentrantLock() {
+    // 默认非公平锁
+    sync = new NonfairSync();
+}
+public ReentrantLock(boolean fair) {
+    sync = fair ? new FairSync() : new NonfairSync();
+}
+~~~
+
+ReentrantLock 中公平锁的 lock 方法：
+
+~~~java
+static final class FairSync extends Sync {
+    final void lock() {
+        acquire(1);
+    }
+    // AbstractQueuedSynchronizer.acquire(int arg)
+    public final void acquire(int arg) {
+        if (!tryAcquire(arg) &&
+            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            selfInterrupt();
+    }
+    protected final boolean tryAcquire(int acquires) {
+        final Thread current = Thread.currentThread();
+        int c = getState();
+        if (c == 0) {
+            // 1. 和非公平锁相比，这里多了一个判断：是否有线程在等待
+            if (!hasQueuedPredecessors() &&
+                compareAndSetState(0, acquires)) {
+                setExclusiveOwnerThread(current);
+                return true;
+            }
+        }
+        else if (current == getExclusiveOwnerThread()) {
+            int nextc = c + acquires;
+            if (nextc < 0)
+                throw new Error("Maximum lock count exceeded");
+            setState(nextc);
+            return true;
+        }
+        return false;
+    }
+}
+~~~
+
+非公平锁的 lock 方法：
+
+~~~java
+static final class NonfairSync extends Sync {
+    final void lock() {
+        // 2. 和公平锁相比，这里会直接先进行一次CAS，成功就返回了
+        if (compareAndSetState(0, 1))
+            setExclusiveOwnerThread(Thread.currentThread());
+        else
+            acquire(1);
+    }
+    // AbstractQueuedSynchronizer.acquire(int arg)
+    public final void acquire(int arg) {
+        if (!tryAcquire(arg) &&
+            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            selfInterrupt();
+    }
+    protected final boolean tryAcquire(int acquires) {
+        return nonfairTryAcquire(acquires);
+    }
+}
+/**
+ * Performs non-fair tryLock.  tryAcquire is implemented in
+ * subclasses, but both need nonfair try for trylock method.
+ */
+final boolean nonfairTryAcquire(int acquires) {
+    final Thread current = Thread.currentThread();
+    int c = getState();
+    if (c == 0) {
+        // 这里没有对阻塞队列进行判断
+        if (compareAndSetState(0, acquires)) {
+            setExclusiveOwnerThread(current);
+            return true;
+        }
+    }
+    else if (current == getExclusiveOwnerThread()) {
+        int nextc = c + acquires;
+        if (nextc < 0) // overflow
+            throw new Error("Maximum lock count exceeded");
+        setState(nextc);
+        return true;
+    }
+    return false;
+}
+~~~
+
+总结：公平锁和非公平锁只有两处不同：
+
+* 非公平锁在调用 lock 后，首先就会调用 CAS 进行一次抢锁，如果这个时候恰巧锁没有被占用，那么直接就获取到锁返回了。
+* 非公平锁在 CAS 失败后，和公平锁一样都会进入到 tryAcquire 方法，在 tryAcquire 方法中，如果发现锁这个时候被释放了（state == 0），非公平锁会直接 CAS 抢锁，但是公平锁会判断等待队列是否有线程处于等待状态，如果有则不去抢锁，乖乖排到后面。
+
+如果这两次 CAS 都不成功，那么后面非公平锁和公平锁是一样的，都要进入到阻塞队列等待唤醒
+
+
+
 ## 使用ReentrantLock编写阻塞队列
 
 把之前用内置锁编写的阻塞队列用显式锁实现：
@@ -2859,6 +3580,13 @@ CountDownLatch和join相比有两个优点：
 * CountDownLatch代表的计数器的大小可以为0，意味着在一个线程调用await方法时会立即返回。
 * 如果某些线程中有阻塞操作的话，最好使用带有超时时间的await方法，以免该线程调用await方法之后永远得不到执行。
 
+CountDownLatch 是共享锁的一种实现,它默认构造 AQS 的 state 值为 count。当线程使用 countDown() 方法时,其实使用了tryReleaseShared方法以 CAS 的操作来减少 state,直至 state 为 0 。当调用 await() 方法的时候，如果 state 不为 0，那就证明任务还没有执行完毕，await() 方法就会一直阻塞，也就是说 await() 方法之后的语句不会被执行。然后，CountDownLatch 会自旋 CAS 判断 state == 0，如果 state == 0 的话，就会释放所有等待的线程，await() 方法之后的语句得到执行。
+
+CountDownLatch 的两种典型用法：
+
+* 某一线程在开始运行前等待 n 个线程执行完毕。
+* 实现多个线程开始执行任务的最大并行性。例如将其计数器初始化为 1 ，多个线程await，主线程调用countDown后，多个线程同时被唤醒。
+
 CompletableFuture可以代替CountDownLatch，例如一个使用多线程读取多个文件处理的场景，要读取处理 6 个文件，这 6 个任务都是没有执行顺序依赖的任务，但是我们需要返回给用户的时候将这几个文件的处理的结果进行统计整理，如果用CountDownLatch实现：
 
 ~~~java
@@ -3029,6 +3757,104 @@ CyclicBarrier和CountDownLatch的区别：
 * CountDownLatch等待的是countDown，CyclicBarrier等待的是await
 * CountDownLatch不能循环利用，CyclicBarrier依靠reset方法可以达到循环利用
 
+CountDownLatch 的实现是基于 AQS 的，而 CycliBarrier 是基于 ReentrantLock的
+
+当调用 CyclicBarrier 对象调用 await() 方法时，实际上调用的是 dowait(false, 0L)方法。 await() 方法就像树立起一个栅栏的行为一样，将线程挡住了，当拦住的线程数量达到 parties 的值时，栅栏才会打开，线程才得以通过执行。
+
+~~~java
+public int await() throws InterruptedException, BrokenBarrierException {
+  try {
+        return dowait(false, 0L);
+  } catch (TimeoutException toe) {
+        throw new Error(toe); // cannot happen
+  }
+}
+~~~
+
+dowait方法：
+
+~~~java
+    // 当线程数量或者请求数量达到 count 时 await 之后的方法才会被执行。上面的示例中 count 的值就为 5。
+    private int count;
+    /**
+     * Main barrier code, covering the various policies.
+     */
+    private int dowait(boolean timed, long nanos)
+        throws InterruptedException, BrokenBarrierException,
+               TimeoutException {
+        final ReentrantLock lock = this.lock;
+        // 锁住
+        lock.lock();
+        try {
+            final Generation g = generation;
+
+            if (g.broken)
+                throw new BrokenBarrierException();
+
+            // 如果线程中断了，抛出异常
+            if (Thread.interrupted()) {
+                breakBarrier();
+                throw new InterruptedException();
+            }
+            // cout减1
+            int index = --count;
+            // 当 count 数量减为 0 之后说明最后一个线程已经到达栅栏了，也就是达到了可以执行await 方法之后的条件
+            if (index == 0) {  // tripped
+                boolean ranAction = false;
+                try {
+                    final Runnable command = barrierCommand;
+                    if (command != null)
+                        command.run();
+                    ranAction = true;
+                    // 将 count 重置为 parties 属性的初始化值
+                    // 唤醒之前等待的线程
+                    // 下一波执行开始
+                    nextGeneration();
+                    return 0;
+                } finally {
+                    if (!ranAction)
+                        breakBarrier();
+                }
+            }
+
+            // loop until tripped, broken, interrupted, or timed out
+            for (;;) {
+                try {
+                    if (!timed)
+                        trip.await();
+                    else if (nanos > 0L)
+                        nanos = trip.awaitNanos(nanos);
+                } catch (InterruptedException ie) {
+                    if (g == generation && ! g.broken) {
+                        breakBarrier();
+                        throw ie;
+                    } else {
+                        // We're about to finish waiting even if we had not
+                        // been interrupted, so this interrupt is deemed to
+                        // "belong" to subsequent execution.
+                        Thread.currentThread().interrupt();
+                    }
+                }
+
+                if (g.broken)
+                    throw new BrokenBarrierException();
+
+                if (g != generation)
+                    return index;
+
+                if (timed && nanos <= 0L) {
+                    breakBarrier();
+                    throw new TimeoutException();
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+~~~
+
+CyclicBarrier 内部通过一个 count 变量作为计数器，count 的初始值为 parties 属性的初始化值，每当一个线程到了栅栏这里了，那么就将计数器减一。如果 count 值为 0 了，表示这是这一代最后一个线程到达栅栏，就尝试执行我们构造方法中输入的任务。
+
 ## Semaphore
 
 Semaphore用于限制并发执行线程的数量，多用于获取有限资源的场景，它的构造方法可以传入一个数字，代表允许并发执行的线程数量，第二个参数可以选择传入一个布尔值，该布尔值代表是否是公平的选取排队线程。
@@ -3060,6 +3886,8 @@ public class SemaphoreDemo {
     }
 }
 ~~~
+
+Semaphore 与 CountDownLatch 一样，也是共享锁的一种实现。它默认构造 AQS 的 state 为 permits。当执行任务的线程数量超出 permits，那么多余的线程将会被放入阻塞队列 Park,并自旋判断 state 是否大于 0。只有当 state 大于 0 的时候，阻塞的线程才能继续执行,此时先前执行任务的线程继续执行 release() 方法，release() 方法使得 state 的变量会加 1，那么自旋的线程便会判断成功。 如此，每次只有最多不超过 permits 数量的线程能自旋成功，便限制了执行任务线程的数量。
 
 ## Exchanger
 
@@ -3941,6 +4769,8 @@ static final class HashEntry<K,V> {
 
 综上所述，在调用get方法时，找到链表后进行遍历的时候，其他线程可能对链表结构做了调整，因此get方法返回的可能是过时的数据，由于这一点，ConcurrentHashMap也被称为具有弱一致性。如果要求强一致性，那么必须使用Collections.synchronizedMap()方法或者直接使用Hashtable
 
+在Collections.synchronizedMap()方法中，会通过使用一个全局的锁来同步不同线程间的并发访问
+
 ### size操作
 
 由于整个ConcurrentHashMap的数据被划分到多个Segment中，不同的Segment用不同的锁来保护，所以size方法需要获取所有Segment的size数据。最简单的方法是执行size操作前把所有的Segment锁都获取到，把各个Segment中的Entry节点数量加起来返回之后再释放掉锁，但这样效率太低
@@ -3957,11 +4787,38 @@ static final class HashEntry<K,V> {
 
 ![QQ图片20220820233501](QQ图片20220820233501.png)
 
-它的优势就是即使在遍历过程中有新的元素插入，它会被插入的新数组中，对遍历不会影响产生影响，也就不会抛出ConcurrentModificationException异常。调用get方法也是针对当前的底层数组调用的，如果在调用期间有别的线程写入，get方法时不能获取到最新值的
+它的优势就是即使在遍历过程中有新的元素插入，它会被插入的新数组中，对遍历不会影响产生影响，也就不会抛出ConcurrentModificationException异常。调用get方法也是针对当前的底层数组调用的，如果在调用期间有别的线程写入，get方法时不能获取到最新值的，因此get方法是完全不加锁的。
+
+CopyOnWriteArrayList 写入操作 add()方法在添加集合的时候加了锁，保证了同步，避免了多线程写的时候会 copy 出多个副本出来：
+
+~~~java
+    /**
+     * Appends the specified element to the end of this list.
+     *
+     * @param e element to be appended to this list
+     * @return {@code true} (as specified by {@link Collection#add})
+     */
+    public boolean add(E e) {
+        final ReentrantLock lock = this.lock;
+        lock.lock();//加锁
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            Object[] newElements = Arrays.copyOf(elements, len + 1);//拷贝新数组
+            newElements[len] = e;
+            setArray(newElements);
+            return true;
+        } finally {
+            lock.unlock();//释放锁
+        }
+    }
+~~~
 
 ## ConcurrentLinkedQueue
 
-这种队列内部使用CAS操作实现入队和出队操作，可以保证安全性
+这种队列内部使用CAS操作实现入队和出队操作，可以保证安全性。
+
+高效的并发队列，使用链表实现。可以看做一个线程安全的 LinkedList，这是一个非阻塞队列
 
 ## 阻塞队列
 
@@ -3978,12 +4835,24 @@ static final class HashEntry<K,V> {
 
 下面是它的实现类：
 
-* ArrayBlockingQueue：底层是数组结构的有界阻塞队列
+* ArrayBlockingQueue：底层是数组结构的有界阻塞队列。一旦创建，容量不能改变。其并发控制采用可重入锁 ReentrantLock ，不管是插入操作还是读取操作，都需要获取到锁才能进行操作。 默认情况下不能保证线程访问队列的公平性，可以传入true创建一个公平队列
+
 * LinkedBlockingQueue：底层是链表结构的有界阻塞队列，如果不指定容量那它的大小就是最大的int值
-* PriorityBlockingQueue：支持优先级排序的无界阻塞队列
+
+* PriorityBlockingQueue：支持优先级排序的无界阻塞队列。默认情况下元素采用自然顺序进行排序，也可以通过自定义类实现 compareTo() 方法来指定元素排序规则，或者初始化时通过构造器参数 Comparator 来指定排序规则。插入队列的对象必须是可比较大小的（comparable），否则报 ClassCastException 异常
+
+  它就是 PriorityQueue 的线程安全版本，它不可以插入 null 值
+
+  PriorityBlockingQueue 并发控制采用的是可重入锁 ReentrantLock
+
+  队列为无界队列（ArrayBlockingQueue 是有界队列，LinkedBlockingQueue 也可以通过在构造函数中传入 capacity 指定队列最大的容量，但是 PriorityBlockingQueue 只能指定初始的队列大小，后面插入元素的时候，如果空间不够的话会自动扩容），它的插入操作 put 方法不会 block，因为它是无界队列（take 方法在队列为空的时候会阻塞）。
+
 * DelayQueue：支持延时获取的无界阻塞队列
+
 * SynchronousQueue：不存储元素的阻塞队列，这种队列内部并没有维护链表也没有维护数组，在一个线程调用put方法之后就会进入阻塞状态，直到另一个线程调用take方法把元素拿走或者响应中断才继续恢复执行
+
 * LinkedTransferQueue：底层是链表结构的无界阻塞队列，它实现了普通阻塞队列方法的同时，提供了transfer方法，它可以直接将元素传递给因为取元素而阻塞的线程，如果没有线程阻塞等待，则将其插入队列中并阻塞，直到有别的线程取走元素，相当于实现了部分SynchronousQueue的功能
+
 * LinkedBlockingDeque：底层是链表结构的双向阻塞队列，这个阻塞队列的两端都可以进行插入和阻塞操作，在原来队列的基础上增加了addFirst、addLast、offerFirst、offerLast、peekFirst、peekLast等方法
 
 下面重点介绍DelayQueue，它是支持延时获取的无界阻塞队列
@@ -4047,3 +4916,357 @@ public class DelayedObject implements Delayed {
 }
 ~~~
 
+阻塞队列的实现原理都是加锁
+
+## ConcurrentSkipListMap
+
+对于一个单链表，即使链表是有序的，如果我们想要在其中查找某个数据，也只能从头到尾遍历链表，这样效率自然就会很低，跳表就不一样了。跳表是一种可以用来快速查找的数据结构，有点类似于平衡树。它们都可以对元素进行快速的查找。但一个重要的区别是：对平衡树的插入和删除往往很可能导致平衡树进行一次全局的调整。而对跳表的插入和删除只需要对整个数据结构的局部进行操作即可。这样带来的好处是：在高并发的情况下，你会需要一个全局锁来保证整个平衡树的线程安全。而对于跳表，你只需要部分锁即可。这样，在高并发环境下，你就可以拥有更好的性能。而就查询的性能而言，跳表的时间复杂度也是 O(logn)
+
+所以在并发数据结构中，JDK 使用跳表来实现一个有顺序的 Map。
+
+跳表的本质是同时维护了多个链表，并且链表是分层的：
+
+![QQ图片20221019210155](QQ图片20221019210155.png)
+
+最低层的链表维护了跳表内所有的元素，每上面一层链表都是下面一层的子集。
+
+跳表内的所有链表的元素都是排序的。查找时，可以从顶级链表开始找。一旦发现被查找的元素大于当前链表中的取值，就会转入下一层链表继续找。这也就是说在查找过程中，搜索是跳跃式的。如下图所示，在跳表中查找元素 18：
+
+![QQ图片20221019210232](QQ图片20221019210232.png)
+
+查找 18 的时候原来需要遍历 18 次，现在只需要 7 次即可。针对链表长度比较大的时候，构建索引查找效率的提升就会非常明显。
+
+从上面很容易看出，跳表是一种利用空间换时间的算法
+
+# CompletableFuture
+
+它是才被引入的一个用于异步编程的类，它可以看作是异步运算和结果的载体，它同时实现了 Future 和 CompletionStage 接口：
+
+~~~java
+public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
+}
+~~~
+
+Future接口提供了cancel、get、isDone等方法，用于异步任务；而CompletionStage 接口提供了thenRun、thenAccept等函数式编程能力。
+
+## 创建对象
+
+可以通过new来创建对象，假设在未来的某个时刻，我们得到了最终的结果。这时，我们可以调用 complete() 方法为其传入结果，这表示 resultFuture 已经被完成了：
+
+~~~java
+CompletableFuture<RpcResponse<Object>> resultFuture = new CompletableFuture<>();
+// complete() 方法只能调用一次，后续调用将被忽略。
+resultFuture.complete(rpcResponse);
+rpcResponse = completableFuture.get();
+~~~
+
+如果你已经知道计算的结果的话，可以使用静态方法 completedFuture() 来创建 CompletableFuture：
+
+~~~java
+CompletableFuture<String> future = CompletableFuture.completedFuture("hello!");
+assertEquals("hello!", future.get());
+~~~
+
+completedFuture() 方法底层调用的是带参数的 new 方法，只不过，这个方法不对外暴露。
+
+更普遍的做法是创建对象时封装计算逻辑：
+
+~~~java
+static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier);
+// 使用自定义线程池(推荐)
+static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier, Executor executor);
+static CompletableFuture<Void> runAsync(Runnable runnable);
+// 使用自定义线程池(推荐)
+static CompletableFuture<Void> runAsync(Runnable runnable, Executor executor);
+~~~
+
+示例：
+
+~~~java
+CompletableFuture<Void> future = CompletableFuture.runAsync(() -> System.out.println("hello!"));
+future.get();// 输出 "hello!"
+CompletableFuture<String> future2 = CompletableFuture.supplyAsync(() -> "hello!");
+assertEquals("hello!", future2.get());
+~~~
+
+## 处理异步计算结果
+
+当我们获取到异步计算的结果之后，还可以对其进行进一步的处理，比较常用的方法有下面几个：
+
+* thenApply()
+* thenAccept()
+* thenRun()
+* whenComplete()
+
+1、thenApply
+
+thenApply() 方法接受一个 Function 实例，用它来处理结果：
+
+~~~java
+// 沿用上一个任务的线程池
+public <U> CompletableFuture<U> thenApply(
+    Function<? super T,? extends U> fn) {
+    return uniApplyStage(null, fn);
+}
+
+//使用默认的 ForkJoinPool 线程池（不推荐）
+public <U> CompletableFuture<U> thenApplyAsync(
+    Function<? super T,? extends U> fn) {
+    return uniApplyStage(defaultExecutor(), fn);
+}
+// 使用自定义线程池(推荐)
+public <U> CompletableFuture<U> thenApplyAsync(
+    Function<? super T,? extends U> fn, Executor executor) {
+    return uniApplyStage(screenExecutor(executor), fn);
+}
+~~~
+
+使用示例：
+
+~~~java
+CompletableFuture<String> future = CompletableFuture.completedFuture("hello!")
+        .thenApply(s -> s + "world!");
+assertEquals("hello!world!", future.get());
+// 这次调用将被忽略。
+future.thenApply(s -> s + "nice!");
+assertEquals("hello!world!", future.get());
+~~~
+
+还可以进行流式调用：
+
+~~~java
+CompletableFuture<String> future = CompletableFuture.completedFuture("hello!")
+        .thenApply(s -> s + "world!").thenApply(s -> s + "nice!");
+assertEquals("hello!world!nice!", future.get());
+~~~
+
+2、thenAccept和thenRun
+
+如果你不需要从回调函数中获取返回结果，可以使用 thenAccept() 或者 thenRun()。这两个方法的区别在于 thenRun() 不能访问异步计算的结果。
+
+thenAccept() 方法的参数是 Consumer<? super T>，Consumer 属于消费型接口，它可以接收 1 个输入对象然后进行“消费”：
+
+~~~java
+public CompletableFuture<Void> thenAccept(Consumer<? super T> action) {
+    return uniAcceptStage(null, action);
+}
+
+public CompletableFuture<Void> thenAcceptAsync(Consumer<? super T> action) {
+    return uniAcceptStage(defaultExecutor(), action);
+}
+
+public CompletableFuture<Void> thenAcceptAsync(Consumer<? super T> action,
+                                               Executor executor) {
+    return uniAcceptStage(screenExecutor(executor), action);
+}
+~~~
+
+thenRun() 的方法是的参数是 Runnable：
+
+~~~java
+public CompletableFuture<Void> thenRun(Runnable action) {
+    return uniRunStage(null, action);
+}
+
+public CompletableFuture<Void> thenRunAsync(Runnable action) {
+    return uniRunStage(defaultExecutor(), action);
+}
+
+public CompletableFuture<Void> thenRunAsync(Runnable action,
+                                            Executor executor) {
+    return uniRunStage(screenExecutor(executor), action);
+}
+~~~
+
+thenAccept() 和 thenRun() 使用示例如下：
+
+~~~java
+CompletableFuture.completedFuture("hello!")
+        .thenApply(s -> s + "world!").thenApply(s -> s + "nice!").thenAccept(System.out::println);//hello!world!nice!
+
+CompletableFuture.completedFuture("hello!")
+        .thenApply(s -> s + "world!").thenApply(s -> s + "nice!").thenRun(() -> System.out.println("hello!"));//hello!
+~~~
+
+3、whenComplete
+
+whenComplete() 的方法的参数是 BiConsumer<? super T, ? super Throwable>：
+
+~~~java
+public CompletableFuture<T> whenComplete(
+    BiConsumer<? super T, ? super Throwable> action) {
+    return uniWhenCompleteStage(null, action);
+}
+
+
+public CompletableFuture<T> whenCompleteAsync(
+    BiConsumer<? super T, ? super Throwable> action) {
+    return uniWhenCompleteStage(defaultExecutor(), action);
+}
+// 使用自定义线程池(推荐)
+public CompletableFuture<T> whenCompleteAsync(
+    BiConsumer<? super T, ? super Throwable> action, Executor executor) {
+    return uniWhenCompleteStage(screenExecutor(executor), action);
+}
+~~~
+
+相对于 Consumer ， BiConsumer 可以接收 2 个输入对象然后进行“消费”。使用示例：
+
+~~~java
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "hello!")
+        .whenComplete((res, ex) -> {
+            // res 代表返回的结果
+            // ex 的类型为 Throwable ，代表抛出的异常
+            System.out.println(res);
+            // 这里没有抛出异常所有为 null
+            assertNull(ex);
+        });
+assertEquals("hello!", future.get());
+~~~
+
+## 异常处理
+
+你可以通过 handle() 方法来处理任务执行过程中可能出现的抛出异常的情况：
+
+~~~java
+public <U> CompletableFuture<U> handle(
+    BiFunction<? super T, Throwable, ? extends U> fn) {
+    return uniHandleStage(null, fn);
+}
+
+public <U> CompletableFuture<U> handleAsync(
+    BiFunction<? super T, Throwable, ? extends U> fn) {
+    return uniHandleStage(defaultExecutor(), fn);
+}
+
+public <U> CompletableFuture<U> handleAsync(
+    BiFunction<? super T, Throwable, ? extends U> fn, Executor executor) {
+    return uniHandleStage(screenExecutor(executor), fn);
+}
+~~~
+
+示例代码如下：
+
+~~~java
+CompletableFuture<String> future
+        = CompletableFuture.supplyAsync(() -> {
+    if (true) {
+        throw new RuntimeException("Computation error!");
+    }
+    return "hello!";
+}).handle((res, ex) -> {
+    // res 代表返回的结果
+    // ex 的类型为 Throwable ，代表抛出的异常
+    return res != null ? res : "world!";
+});
+assertEquals("world!", future.get());
+~~~
+
+还可以通过 exceptionally() 方法来处理异常情况：
+
+~~~java
+CompletableFuture<String> future
+        = CompletableFuture.supplyAsync(() -> {
+    if (true) {
+        throw new RuntimeException("Computation error!");
+    }
+    return "hello!";
+}).exceptionally(ex -> {
+    System.out.println(ex.toString());// CompletionException
+    return "world!";
+});
+assertEquals("world!", future.get());
+~~~
+
+如果你想让 CompletableFuture 的结果就是异常的话，可以使用 completeExceptionally() 方法为其赋值：
+
+~~~java
+CompletableFuture<String> completableFuture = new CompletableFuture<>();
+// ...
+completableFuture.completeExceptionally(
+  new RuntimeException("Calculation failed!"));
+// ...
+completableFuture.get(); // ExecutionException
+~~~
+
+## 组合 CompletableFuture
+
+可以使用 thenCompose() 按顺序链接两个 CompletableFuture 对象：
+
+~~~java
+public <U> CompletableFuture<U> thenCompose(
+    Function<? super T, ? extends CompletionStage<U>> fn) {
+    return uniComposeStage(null, fn);
+}
+
+public <U> CompletableFuture<U> thenComposeAsync(
+    Function<? super T, ? extends CompletionStage<U>> fn) {
+    return uniComposeStage(defaultExecutor(), fn);
+}
+
+public <U> CompletableFuture<U> thenComposeAsync(
+    Function<? super T, ? extends CompletionStage<U>> fn,
+    Executor executor) {
+    return uniComposeStage(screenExecutor(executor), fn);
+}
+~~~
+
+thenCompose() 方法使用示例如下：
+
+~~~java
+CompletableFuture<String> future
+        = CompletableFuture.supplyAsync(() -> "hello!")
+        .thenCompose(s -> CompletableFuture.supplyAsync(() -> s + "world!"));
+assertEquals("hello!world!", future.get());
+~~~
+
+在实际开发中，这个方法还是非常有用的。比如说，我们先要获取用户信息然后再用用户信息去做其他事情
+
+和 thenCompose() 方法类似的还有 thenCombine() 方法， thenCombine() 同样可以组合两个 CompletableFuture 对象：
+
+~~~java
+CompletableFuture<String> completableFuture
+        = CompletableFuture.supplyAsync(() -> "hello!")
+        .thenCombine(CompletableFuture.supplyAsync(
+                () -> "world!"), (s1, s2) -> s1 + s2)
+        .thenCompose(s -> CompletableFuture.supplyAsync(() -> s + "nice!"));
+assertEquals("hello!world!nice!", completableFuture.get());
+~~~
+
+thenCompose() 和 thenCombine() 区别：
+
+* thenCompose() 可以两个 CompletableFuture 对象，并将前一个任务的返回结果作为下一个任务的参数，它们之间存在着先后顺序。
+* thenCombine() 会在两个任务都执行完成后，把两个任务的结果合并。两个任务是并行执行的，它们之间并没有先后依赖顺序。
+
+## 并行运行多个 CompletableFuture
+
+可以通过 CompletableFuture 的 allOf()这个静态方法来并行运行多个 CompletableFuture
+
+实际项目中，我们经常需要并行运行多个互不相关的任务，这些任务之间没有依赖关系，可以互相独立地运行。
+
+比说我们要读取处理 6 个文件，这 6 个任务都是没有执行顺序依赖的任务，但是我们需要返回给用户的时候将这几个文件的处理的结果进行统计整理。像这种情况我们就可以使用并行运行多个 CompletableFuture 来处理：
+
+~~~java
+CompletableFuture<Void> task1 =
+  CompletableFuture.supplyAsync(()->{
+    //自定义业务操作
+  });
+......
+CompletableFuture<Void> task6 =
+  CompletableFuture.supplyAsync(()->{
+    //自定义业务操作
+  });
+......
+ CompletableFuture<Void> headerFuture=CompletableFuture.allOf(task1,.....,task6);
+
+  try {
+    headerFuture.join();
+  } catch (Exception ex) {
+    ......
+  }
+System.out.println("all done. ");
+~~~
+
+allOf() 方法会等到所有的 CompletableFuture 都运行完成之后再返回，而anyOf() 方法不会等待所有的 CompletableFuture 都运行完成之后再返回，只要有一个执行完成即可。
+
+调用 join() 可以让程序等future1 和 future2 都运行完了之后再继续执行，可以实现类似CountDownLatch的效果
