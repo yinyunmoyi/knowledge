@@ -1,7 +1,3 @@
-[TOC]
-
-
-
 # Spring
 
 这种将控制权交给别人的思想，就可以称作：控制反转（ Inverse of Control , IOC ）。而 BeanFactory 根据指定的beanName去获取和创建对象的过程，就可以称作：依赖查找（ Dependency Lookup , DL ）。 （依赖注入是指自动注入bean的属性）
@@ -4552,6 +4548,8 @@ public @interface EnableAspectJAutoProxy {
 
 它向容器中导入了一个注册类：AspectJAutoProxyRegistrar。该类实现了ImportBeanDefinitionRegistrar，在registerBeanDefinitions方法中将一个后置处理器的BeanDefinition注册到了容器中，这个处理器就是代理对象的创建器：AnnotationAwareAspectJAutoProxyCreator
 
+可以发现，@EnableAspectJAutoProxy 的根本作用是在IOC容器中注册了一个 AnnotationAwareAspectJAutoProxyCreator
+
 观察AnnotationAwareAspectJAutoProxyCreator类的继承结构：
 
 ![AnnotationAwareAspectJAutoProxyCreator](AnnotationAwareAspectJAutoProxyCreator.png)
@@ -4564,6 +4562,8 @@ public @interface EnableAspectJAutoProxy {
 * AopInfrastructureBean ：实现了该接口的 bean 永远不会被代理（防止套娃）
 
 它的第一个基本实现抽象类是AbstractAutoProxyCreator
+
+AnnotationAwareAspectJAutoProxyCreator是一个后置处理器
 
 在它的BeanDefinition注册到BeanDefinitionRegistry之后，在后置处理器初始化的时候，它就会被创建出来，而且它是实现了 Ordered 接口，它会提前于普通 BeanPostProcessor 创建，所以普通的 BeanPostProcessor 也会被 AOP 代理。
 
@@ -4690,7 +4690,28 @@ sequenceDiagram
 
 额外增加的增强器是ExposeInvocationInterceptor，它每次都在增强器链的第一个执行，会把MethodInvocation放入一个ThreadLocal中，它可以让后面的增强器都拿到当前正在执行的 MethodInvocation。
 
-AopProxy有两种，区分的是底层两种代理对象生成方式：如果要代理的本身就是接口（也有一种说法是目标类是实现了接口的类），或者已经是被jdk动态代理了的代理对象，则使用jdk动态代理，此时生成的就是JdkDynamicAopProxy，否则使用Cglib动态代理，生成的代理类是ObjenesisCglibAopProxy
+AopProxy有两种，区分的是底层两种代理对象生成方式：如果要代理的本身就是接口（也有一种说法是目标类是实现了接口的类），或者已经是被jdk动态代理了的代理对象，则使用jdk动态代理，此时生成的就是JdkDynamicAopProxy，否则使用Cglib动态代理，生成的代理类是ObjenesisCglibAopProxy：
+
+~~~java
+public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException {
+    if (config.isOptimize() || config.isProxyTargetClass() || hasNoUserSuppliedProxyInterfaces(config)) {
+        Class<?> targetClass = config.getTargetClass();
+        if (targetClass == null) {
+            throw new AopConfigException("TargetSource cannot determine target class: " +
+                    "Either an interface or a target is required for proxy creation.");
+        }
+        if (targetClass.isInterface() || Proxy.isProxyClass(targetClass)) {
+            return new JdkDynamicAopProxy(config);
+        }
+        return new ObjenesisCglibAopProxy(config);
+    }
+    else {
+        return new JdkDynamicAopProxy(config);
+    }
+}
+~~~
+
+![16e589479a787924_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0](16e589479a787924_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0.jpg)
 
 ## 代理对象的底层执行逻辑
 
@@ -4716,6 +4737,8 @@ AopProxy有两种，区分的是底层两种代理对象生成方式：如果要
 直到所有的增强器都被执行完了，最后它会执行被代理的方法，整个逻辑是由一个成员变量控制的，每次执行完一个它就加1，最后和总的增强器数量对比。
 
  jdk 动态代理的执行和cglib的类似，它执行被代理方法会执行到JdkDynamicAopProxy的invoke，它也会先判断是否执行代理（equals方法、hashCode方法、方法来自于DecoratingProxy接口的、目标对象本身就是实现了Advised接口的都不代理），然后封装MethodInvocation，最后开始执行。
+
+![16e5911707f0fb6b_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0](16e5911707f0fb6b_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0.jpg)
 
 MethodInterceptor几个子类，分别对应几种通知的源码实现：
 

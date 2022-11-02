@@ -1909,3 +1909,5 @@ HandlerAdapter有很多默认实现，但正常情况下匹配的只有RequestMa
 * 若是ViewNameMethodReturnValueHandler，会判断返回值类似是否是String，若是String，则将其作为viewName设置到ModelAndViewContainer，并设置重定向的行为
 * 若是RequestResponseBodyMethodProcessor，则会判断方法上是否有@RequestBody 或者 @ResponseBody，若满足要求，则对于 json 数据的响应，也就是把要响应的数据，序列化成 json ，写入 HttpServletResponse
 
+
+![16e2a32296c5f67c_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0](16e2a32296c5f67c_tplv-t2oaga2asx-zoom-in-crop-mark_3024_0_0_0.jpg)
