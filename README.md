@@ -20,6 +20,8 @@
 
 * [SpringCloud基础](docs/SpringCloud/SpringCloud基础/springcloud.md)
 
+* [SpringCloud进阶上](docs/SpringCloud/SpringCloud进阶/SpringCloud进阶上.md)
+
 * [MyBatis基础](docs/MyBatis/MyBatis基础/MyBatis.md)
 
 * [图解网络](./docs/network/图解系列/网络基础.md)
