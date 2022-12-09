@@ -805,7 +805,775 @@ docker run -d -p 9080:8080 --name myt9 -v /zzyyuse/mydockerfile/tomcat9/test:/us
 
 自定义dockerFile的场景基本上都是从其他dockerFile入手，然后进行自定义修改的。
 
+# Docker与K8S
 
+## 云计算发展历史
 
+最开始有一个叫dotCloud的公司，开源了自己的容器项目Docker，它改变了整个云计算领域的发展历程。
 
+之前PaaS（Platform-As-A-Service）项目被大家接纳的一个主要原因，就是它提供了一种名叫“应用托管”的能力。 在当时，虚拟机和云计算已经是比较普遍的技术和服务了，那时主流用户的普遍用法，就是租一批AWS或者OpenStack的虚拟机，然后像以前管理物理服务器那样，用脚本或者手工的方式在这些机器上部署应用。 
 
+像Cloud Foundry这样的PaaS项目，最核心的组件就是一套应用的打包和分发机制，Cloud Foundry为每种主流编程语言都定义了一种打包格式，用户把应用的可执行文件和启动脚本打进一个压缩包内，上传到云上Cloud Foundry的存储中。接着，Cloud Foundry会通过调度器选择一个可以运行这个应用的虚拟机，然后通知这个机器上的Agent把应用压缩包下载下来启动。
+
+由于需要在一个虚拟机上启动很多个来自不同用户的应用，Cloud Foundry会调用操作系统的Cgroups和Namespace机制为每一个应用单独创建一个称作“沙盒”的隔离环境，然后在“沙盒”中启动这些应用进程。这样，就实现了把多个用户的应用互不干涉地在虚拟机里批量地、自动地运行起来的目的。 这个所谓的沙盒，就是容器的概念。
+
+Docker项目确实与Cloud Foundry的容器在大部分功能和实现原理上都是一样的，但它的关键功能是Docker镜像。PaaS之所以能够帮助用户大规模部署应用到集群里，是因为它提供了一套应用打包的功能，一旦用上了PaaS，用户就必须为每种语言、每种框架，甚至每个版本的应用维护一个打好的包。这个打包过程，没有任何章法可循，更麻烦的是，明明在本地运行得好好的应用，却需要做很多修改和配置工作才能在PaaS里运行起来。而这些修改和配置，并没有什么经验可以借鉴，基本上得靠不断试错，直到你摸清楚了本地应用和远端PaaS匹配的“脾气”才能够搞定。 
+
+而Docker镜像解决的，恰恰就是打包这个根本性的问题。大多数Docker镜像是直接由一个完整操作系统的所有文件和目录构成的，所以这个压缩包里的内容跟你本地开发和测试环境用的操作系统是完全一样的。 这个压缩包包含了完整的操作系统文件和目录，也就是包含了这个应用运行所需要的所有依赖，所以你可以先用这个压缩包在本地进行开发和测试，完成之后，再把这个压缩包上传到云端运行。在这个过程中，你完全不需要进行任何配置或者修改，因为这个压缩包赋予了你一种极其宝贵的能力：本地环境和云端环境的高度一致，这就是Docker镜像的精髓。
+
+有了Docker镜像这个利器，PaaS里最核心的打包系统一下子就没了用武之地，最让用户抓狂的打包过程也随之消失了。 Docker项目给PaaS世界带来的“降维打击”，其实是提供了一种非常便利的打包机制。这种机制直接打包了应用运行所需要的整个操作系统，从而保证了本地环境和云端环境的高度一致，避免了用户通过“试错”来匹配两种不同运行环境之间差异的痛苦过程。
+
+不过，Docker项目固然解决了应用打包的难题，但正如前面所介绍的那样，它并不能代替PaaS完成大规模部署应用的职责。 一些机敏的创业公司，纷纷在第一时间推出了Docker容器集群管理的开源项目（比如Deis和Flynn），它们一般称自己为CaaS，即Container-as-a-Service，用来跟“过时”的PaaS们划清界限。 
+
+Docker公司也发布了Swarm，它是一个集群管理项目，最大亮点是完全使用Docker项目原本的容器管理API来完成集群管理。最终，谷歌的Kubernetes依靠设计理念、号召力、稳定和扩展性，战胜了Swarm
+
+##容器技术
+
+容器技术的核心功能，就是通过约束和修改进程的动态表现，从而为其创造出一个“边界”。应用与应用之间，就因为有了边界而不至于相互干扰。
+
+容器的关键技术：Cgroups和Namespace
+
+对于Docker等大多数Linux容器来说，Cgroups技术是用来制造约束的主要手段，而Namespace技术则是用来修改进程视图的主要方法。
+
+下面会介绍Linux容器技术，之所以要强调Linux容器，是因为比如Docker on Mac，以及Windows Docker（Hyper-V实现），实际上是基于虚拟化技术实现的， 跟容器技术完全不同。
+
+###Namespace
+
+在容器中执行ps命令会发现，只能看到容器内部的进程，看不到宿主机和其他容器的进程。这种机制，其实就是对被隔离应用的进程空间做了手脚，使得这些进程只能看到重新计算过的进程编号，比如PID=1。可实际上，他们在宿主机的操作系统里，还是原来的第100号进程。 
+
+这种技术，就是Linux里面的Namespace机制。它其实只是Linux创建新进程的一个可选参数。在Linux系统中创建进程的系统调用是clone()，比如： 
+
+~~~c
+int pid = clone(main_function, stack_size, SIGCHLD, NULL); 
+~~~
+
+这个系统调用就会为我们创建一个新的进程，并且返回它的进程号pid。
+
+而当我们用clone()系统调用创建一个新进程时，就可以在参数中指定CLONE_NEWPID参数，比如：
+
+~~~c
+int pid = clone(main_function, stack_size, CLONE_NEWPID | SIGCHLD, NULL); 
+~~~
+
+这时，新创建的这个进程将会“看到”一个全新的进程空间，在这个进程空间里，它的PID是1。之所以说“看到”，是因为这只是一个“障眼法”，在宿主机真实的进程空间里，这个进程的PID还是真实的数值，比如100。 
+
+我们还可以多次执行上面的clone()调用，这样就会创建多个PID Namespace，而每个Namespace里的应用进程，都会认为自己是当前容器里的第1号进程，它们既看不到宿主机里真正的进程空间，也看不到其他PID Namespace里的具体情况。 
+
+除了我们刚刚用到的PID Namespace，Linux操作系统还提供了Mount、UTS、IPC、Network和User这些Namespace，用来对各种不同的进程上下文进行“障眼法”操作：
+
+* Mount Namespace：用于让被隔离进程只看到当前Namespace里的挂载点信息 
+* Network Namespace：用于让被隔离进程看到当前Namespace里的网络设备和配置。 
+
+所以Docker容器实际上就是在创建容器进程的时候，指定了这个进程所需要启用的一组Namespace参数。这样，容器就只能“看”到当前Namespace所限定的资源、文件、设备、状态，或者配置。而对于宿主机以及其他不相关的程序，它就完全看不到了。 
+
+容器本质上就是一个特殊的进程而已，所以对于下面这张虚拟机和容器的对比图来说，是不准确的：
+
+![QQ图片20221209203550](QQ图片20221209203550.png)
+
+这幅图的左边，画出了虚拟机的工作原理。其中，名为Hypervisor的软件是虚拟机最主要的部分。它通过硬件虚拟化功能，模拟出了运行一个操作系统需要的各种硬件，比如CPU、内存、I/O设备等等。然后，它在这些虚拟的硬件上安装了一个新的操作系统，即Guest OS。
+
+这样，用户的应用进程就可以运行在这个虚拟的机器中，它能看到的自然也只有Guest OS的文件和目录，以及这个机器里的虚拟设备。这就是为什么虚拟机也能起到将不同的应用进程相互隔离的作用。
+
+而这幅图的右边，则用一个名为Docker Engine的软件替换了Hypervisor。这也是为什么，很多人会把Docker项目称为“轻量级”虚拟化技术的原因，实际上就是把虚拟机的概念套在了容器上。
+
+之所以说这个图的概念不准确，是因为在使用Docker的时候，并没有一个真正的“Docker容器”运行在宿主机里面。Docker项目帮助用户启动的，还是原来的应用进程，只不过在创建这些进程时，Docker为它们加上了各种各样的Namespace参数。这时，这些进程就会觉得自己是各自PID Namespace里的第1号进程，只能看到各自Mount Namespace里挂载的目录和文件，只能访问到各自Network Namespace里的网络设备，就仿佛运行在一个个“容器”里面，与世隔绝。  
+
+所以，在这个对比图里，我们应该把Docker画在跟应用同级别并且靠边的位置。这意味着，用户运行在容器里的应用进程，跟宿主机上的其他进程一样，都由宿主机操作系统统一管理。
+
+虚拟机的资源消耗和占用较大，而且用户应用运行在虚拟机里面，它对宿主机操作系统的调用就不可避免地要经过虚拟化软件的拦截和处理，这本身又是一层性能损耗。相比之下，容器化后的用户应用，却依然还是一个宿主机上的普通进程，这就意味着这些因为虚拟化而带来的性能损耗都是不存在的；而另一方面，使用Namespace作为隔离手段的容器并不需要单独的Guest OS，这就使得容器额外的资源占用几乎可以忽略不计， 这就是Docker高性能的根源。
+
+Docker因容器技术得到了高性能，但对应的，也存在一些弊端，那就是隔离不彻底。既然容器只是运行在宿主机上的一种特殊的进程，那么多个容器之间使用的就还是同一个宿主机的操作系统内核。尽管你可以在容器里通过Mount Namespace单独挂载其他不同版本的操作系统文件，比如CentOS或者Ubuntu，但这并不能改变共享宿主机内核的事实。这意味着，如果你要在Windows宿主机上运行Linux容器，或者在低版本的Linux宿主机上运行高版本的Linux容器，都是行不通的。 
+
+此外，在Linux内核中，有很多资源和对象是不能被Namespace化的，最典型的例子就是：时间。如果在容器中修改了时间，整个宿主机的时间都会被随之修改。因为这种隔离的不彻底，在安全方面也会有很多挑战，尤其是共享宿主机内核的事实，容器给应用暴露出来的攻击面是相当大的，应用“越狱”的难度自然也比虚拟机低得多。 
+
+###Cgroups
+
+虽然容器内的第1号进程在“障眼法”的干扰下只能看到容器里的情况，但是宿主机上，它作为第100号进程与其他所有进程之间依然是平等的竞争关系。这就意味着，虽然第100号进程表面上被隔离了起来，但是它所能够使用到的资源（比如CPU、内存），却是可以随时被宿主机上的其他进程（或者其他容器）占用的。当然，这个100号进程自己也可能把所有资源吃光。 
+
+为了对进程设置资源限制，就要用到Linux内核提供的Cgroups功能。Linux Cgroups的全称是Linux Control Group。它最主要的作用，就是限制一个进程组能够使用的资源上限，包括CPU、内存、磁盘、网络带宽等等。此外，Cgroups还能够对进程进行优先级设置、审计，以及将进程挂起和恢复等操作。 
+
+在Linux中，Cgroups给用户暴露出来的操作接口是文件系统，即它以文件和目录的方式组织在操作系统的/sys/fs/cgroup路径下。在Ubuntu 16.04机器里，我可以用mount指令把它们展示出来，这条命令是： 
+
+~~~
+$ mount -t cgroup 
+cpuset on /sys/fs/cgroup/cpuset type cgroup (rw,nosuid,nodev,noexec,relatime,cpuset)
+cpu on /sys/fs/cgroup/cpu type cgroup (rw,nosuid,nodev,noexec,relatime,cpu)
+cpuacct on /sys/fs/cgroup/cpuacct type cgroup (rw,nosuid,nodev,noexec,relatime,cpuacct)
+blkio on /sys/fs/cgroup/blkio type cgroup (rw,nosuid,nodev,noexec,relatime,blkio)
+memory on /sys/fs/cgroup/memory type cgroup (rw,nosuid,nodev,noexec,relatime,memory)
+...
+~~~
+
+它的输出结果，是一系列文件系统目录。如果你在自己的机器上没有看到这些目录，那你就需要自己去挂载Cgroups 。
+
+可以看到，在/sys/fs/cgroup下面有很多诸如cpuset、cpu、 memory这样的子目录，也叫子系统。这些都是我这台机器当前可以被Cgroups进行限制的资源种类。而在子系统对应的资源种类下，你就可以看到该类资源具体可以被限制的方法。比如，对CPU子系统来说，我们就可以看到如下几个配置文件，这个指令是： 
+
+~~~
+$ ls /sys/fs/cgroup/cpu
+cgroup.clone_children cpu.cfs_period_us cpu.rt_period_us  cpu.shares notify_on_release
+cgroup.procs      cpu.cfs_quota_us  cpu.rt_runtime_us cpu.stat  tasks
+~~~
+
+这里面就包含对CPU限制的细节，例如cfs_period和cfs_quota，这两个参数需要组合使用，可以用来限制进程在长度为cfs_period的一段时间内，只能被分配到总量为cfs_quota的CPU时间。 
+
+如果在/sys/fs/cgroup/cpu下创建一个目录container，系统会自动生成该子系统对应的资源限制文件，在初始状态下，这些配置文件中的值都是默认值：
+
+~~~
+$ cat /sys/fs/cgroup/cpu/container/cpu.cfs_quota_us 
+-1
+$ cat /sys/fs/cgroup/cpu/container/cpu.cfs_period_us 
+100000
+~~~
+
+代表CPU quota还没有任何限制（即：-1），CPU period则是默认的100 ms（100000 us） 
+
+如果要对进程进行限制，首先要将被限制的进程的PID写入container组里的tasks文件：
+
+~~~
+$ echo 226 > /sys/fs/cgroup/cpu/container/tasks 
+~~~
+
+然后修改各限制文件的初始值，如向container组里的cfs_quota文件写入20 ms（20000 us） ：
+
+~~~
+$ echo 20000 > /sys/fs/cgroup/cpu/container/cpu.cfs_quota_us
+~~~
+
+它意味着在每100 ms的时间里，被该控制组限制的进程只能使用20 ms的CPU时间，也就是说这个进程只能使用到20%的CPU带宽。 这样进程资源限制就完成了。
+
+除CPU子系统外，Cgroups的每一个子系统都有其独有的资源限制能力，比如： 
+
+- blkio，为块设备设定I/O限制，一般用于磁盘等设备；
+- cpuset，为进程分配单独的CPU核和对应的内存节点；
+- memory，为进程设定内存使用的限制。
+
+Linux Cgroups就是一个子系统目录加上一组资源限制文件的组合，而对于Docker等Linux容器项目来说，它们只需要在每个子系统下面，为每个容器创建一个控制组（即创建一个新目录），然后在启动容器进程之后，把这个进程的PID填写到对应控制组的tasks文件中就可以了。 
+
+容器的资源限制可以在运行docker镜像时指定：
+
+~~~
+$ docker run -it --cpu-period=100000 --cpu-quota=20000 ubuntu /bin/bash
+~~~
+
+在启动这个容器后，我们可以通过查看Cgroups文件系统下，CPU子系统中，“docker”这个控制组里的资源限制文件的内容来确认： 
+
+~~~
+$ cat /sys/fs/cgroup/cpu/docker/5d5c9f67d/cpu.cfs_period_us 
+100000
+$ cat /sys/fs/cgroup/cpu/docker/5d5c9f67d/cpu.cfs_quota_us 
+20000
+~~~
+
+这就意味着这个Docker容器，只能使用到20%的CPU带宽。 
+
+Cgroups对资源的限制能力也有很多不完善的地方，其中一个重要的问题是/proc文件系统的问题。Linux下的/proc目录存储的是记录当前内核运行状态的一系列特殊文件，用户可以通过访问这些文件，查看系统以及当前正在运行的进程的信息，比如CPU使用情况、内存占用率等，这些文件也是top指令查看系统信息的主要数据来源。 如果在容器里执行top指令，就会发现，它显示的信息居然是宿主机的CPU和内存数据，而不是当前容器的数据。
+
+造成这个问题的原因就是，/proc文件系统并不知道用户通过Cgroups给这个容器做了什么样的资源限制，即：/proc文件系统不了解Cgroups限制的存在。
+
+### 根文件系统rootfs
+
+容器的文件系统也应该隔离起来，容器里的应用进程，理应看到一份完全独立的文件系统。这样，它就可以在自己的容器目录（比如/tmp）下进行操作，而完全不会受宿主机以及其他容器的影响。 
+
+观察下列代码，它在创建子进程时开启指定的Namespace：
+
+~~~c
+#define _GNU_SOURCE
+#include <sys/mount.h> 
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <stdio.h>
+#include <sched.h>
+#include <signal.h>
+#include <unistd.h>
+#define STACK_SIZE (1024 * 1024)
+static char container_stack[STACK_SIZE];
+char* const container_args[] = {
+  "/bin/bash",
+  NULL
+};
+
+int container_main(void* arg)
+{  
+  printf("Container - inside the container!\n");
+  execv(container_args[0], container_args);
+  printf("Something's wrong!\n");
+  return 1;
+}
+
+int main()
+{
+  printf("Parent - start a container!\n");
+  int container_pid = clone(container_main, container_stack+STACK_SIZE, CLONE_NEWNS | SIGCHLD , NULL);
+  waitpid(container_pid, NULL, 0);
+  printf("Parent - container stopped!\n");
+  return 0;
+}
+~~~
+
+在main函数里，我们通过clone()系统调用创建了一个新的子进程container_main，并且声明要为它启用Mount Namespace（即：CLONE_NEWNS标志）。
+
+而这个子进程执行的，是一个“/bin/bash”程序，也就是一个shell。所以这个shell就运行在了Mount Namespace的隔离环境中。当编译执行这段程序后：
+
+~~~
+$ gcc -o ns ns.c
+$ ./ns
+Parent - start a container!
+Container - inside the container!
+~~~
+
+这样，我们就进入了这个“容器”当中。可是，如果在“容器”里执行一下ls指令的话，还是会看到宿主机的文件。也就是，即使开启了Mount Namespace，容器进程看到的文件系统也跟宿主机完全一样。 这是因为Mount Namespace修改的，是容器进程对文件系统“挂载点”的认知。只有在“挂载”这个操作发生之后，进程的视图才会被改变。而在此之前，新创建的容器会直接继承宿主机的各个挂载点。 
+
+如果在创建新进程时，增加一个挂载的步骤，告诉容器以tmpfs（内存盘）格式，重新挂载了/tmp目录 ：
+
+~~~c
+int container_main(void* arg)
+{
+  printf("Container - inside the container!\n");
+  // 如果你的机器的根目录的挂载类型是shared，那必须先重新挂载根目录
+  // mount("", "/", NULL, MS_PRIVATE, "");
+  mount("none", "/tmp", "tmpfs", 0, "");
+  execv(container_args[0], container_args);
+  printf("Something's wrong!\n");
+  return 1;
+}
+~~~
+
+这样再次执行后，如果查看/tmp之后，可以看到该目录是空的，这意味着重新挂载生效了。我们可以用mount -l检查一下： 
+
+~~~
+$ mount -l | grep tmpfs
+none on /tmp type tmpfs (rw,relatime)
+~~~
+
+更重要的是，因为我们创建的新进程启用了Mount Namespace，所以这次重新挂载的操作，只在容器进程的Mount Namespace中有效。如果在宿主机上用mount -l来检查一下这个挂载，你会发现它是不存在的： 
+
+~~~
+# 在宿主机上
+$ mount -l | grep tmpfs
+~~~
+
+如果想要容器进程看到的文件系统就是一个独立的隔离环境，我们可以在容器进程启动之前重新挂载它的整个根目录“/”。而由于Mount Namespace的存在，这个挂载对宿主机不可见，所以容器进程就可以在里面随便折腾了。 
+
+在Linux操作系统里，有一个名为chroot的命令可以帮助你在shell中方便地完成这个工作。顾名思义，它的作用就是帮你“change root file system”，即改变进程的根目录到你指定的位置。 chroot命令的用法：
+
+假设，我们现在有一个$HOME/test目录，想要把它作为一个/bin/bash进程的根目录。
+
+首先，创建一个test目录和几个lib文件夹：
+
+~~~
+$ mkdir -p $HOME/test
+$ mkdir -p $HOME/test/{bin,lib64,lib}
+$ cd $T
+~~~
+
+然后，把bash命令拷贝到test目录对应的bin路径下： 
+
+~~~
+$ cp -v /bin/{bash,ls} $HOME/test/bin
+~~~
+
+接下来，把bash命令需要的所有so文件，也拷贝到test目录对应的lib路径下。找到so文件可以用ldd 命令： 
+
+~~~
+$ T=$HOME/test
+$ list="$(ldd /bin/ls | egrep -o '/lib.*\.[0-9]')"
+$ for i in $list; do cp -v "$i" "${T}${i}"; done
+~~~
+
+最后，执行chroot命令，告诉操作系统，我们将使用$HOME/test目录作为/bin/bash进程的根目录： 
+
+~~~
+$ chroot $HOME/test /bin/bash
+~~~
+
+这时，你如果执行"ls /"，就会看到，它返回的都是$HOME/test目录下面的内容，而不是宿主机的内容。
+
+更重要的是，对于被chroot的进程来说，它并不会感受到自己的根目录已经被“修改”成$HOME/test了。
+
+它被修改的原理，和Linux Namespace很类似。实际上，Mount Namespace正是基于对chroot的不断改良才被发明出来的，它也是Linux操作系统里的第一个Namespace。
+
+为了能够让容器的这个根目录看起来更“真实”，我们一般会在这个容器的根目录下挂载一个完整操作系统的文件系统，比如Ubuntu16.04的ISO。这样，在容器启动之后，我们在容器里通过执行"ls /"查看根目录下的内容，就是Ubuntu 16.04的所有目录和文件。 而这个挂载在容器根目录上、用来为容器进程提供隔离后执行环境的文件系统，就是所谓的“容器镜像”。它还有一个更为专业的名字，叫作：rootfs（根文件系统）
+
+所以，一个最常见的rootfs，或者说容器镜像，会包括如下所示的一些目录和文件，比如/bin，/etc，/proc等等： 
+
+~~~
+$ ls /
+bin dev etc home lib lib64 mnt opt proc root run sbin sys tmp usr var
+~~~
+
+综上，对Docker项目来说，它最核心的原理实际上就是为待创建的用户进程：
+
+1. 启用Linux Namespace配置；
+2. 设置指定的Cgroups参数；
+3. 切换进程的根目录（Change Root）。
+
+这样，一个完整的容器就诞生了。不过，Docker项目在最后一步的切换上会优先使用pivot_root系统调用，如果系统不支持，才会使用chroot。这两个系统调用虽然功能类似，但是也有细微的区别。
+
+rootfs只是一个操作系统所包含的文件、配置和目录，并不包括操作系统内核。同一台机器上的所有容器，都共享宿主机操作系统的内核，这就意味着，容器进程对内核参数、模块的修改会直接影响其他容器，这也是容器相比于虚拟机的缺陷。毕竟虚拟机运行一个完整的Guest OS
+
+由于rootfs里打包的不只是应用，而是整个操作系统的文件和目录，也就意味着，应用以及它运行所需要的所有依赖，都被封装在了一起。对一个应用来说，编程语言层面的依赖很重要，但操作系统本身才是它运行所需要的最完整的“依赖库”。有了容器镜像“打包操作系统”的能力，这个最基础的依赖环境也终于变成了应用沙盒的一部分，这就赋予了容器所谓的一致性：无论在本地、云端，还是在一台任何地方的机器上，用户只需要解压打包好的容器镜像，那么这个应用运行所需要的完整的执行环境就被重现出来了。
+
+这种深入到操作系统级别的运行环境一致性，打通了应用在本地开发和远端执行环境之间难以逾越的鸿沟。
+
+### 联合文件系统
+
+构造roofs这个动作，应该是可以重复利用的。例如我现在用Ubuntu操作系统的ISO做了一个rootfs，然后又在里面安装了Java环境，用来部署我的Java应用。那么，我的另一个同事在发布他的Java应用时，显然希望能够直接使用我安装过Java环境的rootfs，而不是重复这个流程。 
+
+而保存roofs这个动作，是需要基于增量修改的。如果修改了同一个roofs就会诞生两个完全不同的roofs需要保存，那最后要保存的数据总量是巨大的。如果能把修改增量化，所有人都只需要维护相对于base rootfs修改的增量内容，而不是每次修改都制造一个“fork”。 
+
+基于这种思想，Docker在镜像的设计中，引入了层（layer）的概念。也就是说，用户制作镜像的每一步操作，都会生成一个层，也就是一个增量rootfs。 这利用了一种叫作联合文件系统（Union File System）的能力 
+
+Union File System也叫UnionFS，最主要的功能是将多个不同位置的目录联合挂载（union mount）到同一个目录下。比如，我现在有两个目录A和B，它们分别有两个文件： 
+
+~~~
+$ tree
+.
+├── A
+│  ├── a
+│  └── x
+└── B
+  ├── b
+  └── x
+~~~
+
+然后，我使用联合挂载的方式，将这两个目录挂载到一个公共的目录C上： 
+
+~~~
+$ mkdir C
+$ mount -t aufs -o dirs=./A:./B none ./C
+~~~
+
+这时，我再查看目录C的内容，就能看到目录A和B下的文件被合并到了一起： 
+
+~~~
+$ tree ./C
+./C
+├── a
+├── b
+└── x
+~~~
+
+可以看到，在这个合并后的目录C里，有a、b、x三个文件，并且x文件只有一份。这，就是“合并”的含义。此外，如果你在目录C里对a、b、x文件做修改，这些修改也会在对应的目录A、B中生效。 
+
+docker在不同的操作系统和不同的版本中有不同的联合文件系统的实现，以AuFS为例，如果我们启动一个容器：
+
+~~~
+$ docker run -d ubuntu:latest sleep 3600
+~~~
+
+这时候，Docker就会从Docker Hub上拉取一个Ubuntu镜像到本地。
+
+这个所谓的“镜像”，实际上就是一个Ubuntu操作系统的rootfs，它的内容是Ubuntu操作系统的所有文件和目录。不过，与之前我们讲述的rootfs稍微不同的是，Docker镜像使用的rootfs，往往由多个“层”组成：
+
+~~~
+$ docker image inspect ubuntu:latest
+...
+     "RootFS": {
+      "Type": "layers",
+      "Layers": [
+        "sha256:f49017d4d5ce9c0f544c...",
+        "sha256:8f2b771487e9d6354080...",
+        "sha256:ccd4d61916aaa2159429...",
+        "sha256:c01d74f99de40e097c73...",
+        "sha256:268a067217b5fe78e000..."
+      ]
+    }
+~~~
+
+可以看到，这个Ubuntu镜像，实际上由五个层组成。这五个层就是五个增量rootfs，每一层都是Ubuntu操作系统文件与目录的一部分；而在使用镜像时，Docker会把这些增量联合挂载在一个统一的挂载点上（等价于前面例子里的“/C”目录）。
+
+这个挂载点就是/var/lib/docker/aufs/mnt/，比如：
+
+~~~
+$ ls /var/lib/docker/aufs/mnt/6e3be5d2ecccae7cc0fcfa2a2f5c89dc21ee30e166be823ceaeba15dce645b3e
+bin boot dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var
+~~~
+
+这个目录里面正是一个完整的Ubuntu操作系统。
+
+通过查看AuFS的挂载信息，我们可以找到这个目录对应的AuFS的内部ID（也叫：si）： 
+
+~~~
+$ cat /proc/mounts| grep aufs
+none /var/lib/docker/aufs/mnt/6e3be5d2ecccae7cc0fc... aufs rw,relatime,si=972c6d361e6b32ba,dio,dirperm1 0 0
+~~~
+
+即，si=972c6d361e6b32ba。
+
+然后使用这个ID，你就可以在/sys/fs/aufs下查看被联合挂载在一起的各个层的信息：
+
+~~~
+$ cat /sys/fs/aufs/si_972c6d361e6b32ba/br[0-9]*
+/var/lib/docker/aufs/diff/6e3be5d2ecccae7cc...=rw
+/var/lib/docker/aufs/diff/6e3be5d2ecccae7cc...-init=ro+wh
+/var/lib/docker/aufs/diff/32e8e20064858c0f2...=ro+wh
+/var/lib/docker/aufs/diff/2b8858809bce62e62...=ro+wh
+/var/lib/docker/aufs/diff/20707dce8efc0d267...=ro+wh
+/var/lib/docker/aufs/diff/72b0744e06247c7d0...=ro+wh
+/var/lib/docker/aufs/diff/a524a729adadedb90...=ro+wh
+~~~
+
+从这些信息里，我们可以看到，镜像的层都放置在/var/lib/docker/aufs/diff目录下，然后被联合挂载在/var/lib/docker/aufs/mnt里面。
+
+而且，从这个结构可以看出来，这个容器的rootfs由如下图所示的三部分组成：
+
+![QQ图片20221209203723](QQ图片20221209203723.png)
+
+三个部分的解读：
+
+* 第一部分：只读层。它是这个容器的rootfs最下面的五层，对应的正是ubuntu:latest镜像的五层。可以看到，它们的挂载方式都是只读的（ro+wh，即readonly+whiteout），这些层，都以增量的方式分别包含了Ubuntu操作系统的一部分 
+
+* 第二部分：可读写层，它是这个容器的rootfs最上面的一层。它的挂载方式为：rw，即read write。在没有写入文件之前，这个目录是空的。而一旦在容器里做了写操作，你修改产生的内容就会以增量的方式出现在这个层中。 如果删除只读层的一个文件，AuFS会在可读写层创建一个whiteout文件，把只读层里的文件“遮挡”起来。
+
+  比如，你要删除只读层里一个名叫foo的文件，那么这个删除操作实际上是在可读写层创建了一个名叫.wh.foo的文件。这样，当这两个层被联合挂载之后，foo文件就会被.wh.foo文件“遮挡”起来，“消失”了。这个功能，就是“ro+wh”的挂载方式，即只读+whiteout的含义。我喜欢把whiteout形象地翻译为：“白障”。 
+
+  最上面这个可读写层的作用，就是专门用来存放你修改rootfs后产生的增量，无论是增、删、改，都发生在这里，不会涉及到下面几层。
+
+* 第三部分：init层，它夹在只读层和读写层之间。Init层是Docker项目单独生成的一个内部层，专门用来存放/etc/hosts、/etc/resolv.conf等信息。需要这样一层的原因是，这些文件本来属于只读的Ubuntu镜像的一部分，但是用户往往需要在启动容器时写入一些指定的值比如hostname，所以就需要在可读写层对它们进行修改。  这些修改往往只对当前的容器有效，我们并不希望执行docker commit时，把这些信息连同可读写层一起提交掉，所以就以一个单独的层挂载出来。
+
+最终，这7个层都被联合挂载到/var/lib/docker/aufs/mnt目录下，表现为一个完整的Ubuntu操作系统供容器使用。 
+
+### Volume 
+
+Volume机制，允许你将宿主机上指定的目录或者文件，挂载到容器里面进行读取和修改操作。
+
+在Docker项目里，它支持两种Volume声明方式，可以把宿主机目录挂载进容器的/test目录当中： 
+
+~~~
+$ docker run -v /test ...
+$ docker run -v /home:/test ...
+~~~
+
+而这两种声明方式的本质，实际上是相同的：都是把一个宿主机的目录挂载进了容器的/test目录。 区别是：
+
+* 第一种情况下，由于你并没有显示声明宿主机目录，那么Docker就会默认在宿主机上创建一个临时目录 /var/lib/docker/volumes/[VOLUME_ID]/_data，然后把它挂载到容器的/test目录上。 
+* 第二种情况下，Docker就直接把宿主机的/home目录挂载到容器的/test目录上。 
+
+当容器进程被创建之后，尽管开启了Mount Namespace，但是在它执行chroot（或者pivot_root）之前，容器进程一直可以看到宿主机上的整个文件系统。 
+
+只需要在rootfs准备好之后，在执行chroot之前，把Volume指定的宿主机目录（比如/home目录），挂载到指定的容器目录（比如/test目录）在宿主机上对应的目录（即/var/lib/docker/aufs/mnt/[可读写层ID]/test）上，这个Volume的挂载工作就完成了。 
+
+更重要的是，由于执行这个挂载操作时，“容器进程”已经创建了，也就意味着此时Mount Namespace已经开启了。所以，这个挂载事件只在这个容器里可见。你在宿主机上，是看不见容器内部的这个挂载点的。这就保证了容器的隔离性不会被Volume打破。
+
+这里提到的"容器进程"，是Docker创建的一个容器初始化进程(dockerinit)，而不是应用进程(ENTRYPOINT + CMD)。dockerinit会负责完成根目录的准备、挂载设备和目录、配置hostname等一系列需要在容器内进行的初始化操作。最后，它通过execv()系统调用，让应用进程取代自己，成为容器里的PID=1的进程。 
+
+这里说的挂载技术，就是Linux的绑定挂载（bind mount）机制。它的主要作用就是，允许你将一个目录或者文件，而不是整个设备，挂载到一个指定的目录上。并且，这时你在该挂载点上进行的任何操作，只是发生在被挂载的目录或者文件上，而原挂载点的内容则会被隐藏起来且不受影响。
+
+绑定挂载实际上是一个inode替换的过程。mount --bind /home /test，会将/home挂载到/test上。其实相当于将/test的dentry，重定向到了/home的inode。这样当我们修改/test目录时，实际修改的是/home目录的inode。这也就是为何，一旦执行umount命令，/test目录原先的内容就会恢复：因为修改真正发生在的，是/home目录里。 
+
+![QQ图片20221209203819](QQ图片20221209203819.png)
+
+绑定挂载可以让进程在容器里对这个/test目录进行的所有操作，都实际发生在宿主机的对应目录（比如，/home，或者/var/lib/docker/volumes/[VOLUME_ID]/_data）里，而不会影响容器镜像的内容。 
+
+这个已经挂载到容器的目录，虽然挂载在容器rootfs的可读写层，但不会被docker commit提交，因为docker commit，都是发生在宿主机空间的。而由于Mount Namespace的隔离作用，宿主机并不知道这个绑定挂载的存在。所以，在宿主机看来，容器中可读写层的/test目录（/var/lib/docker/aufs/mnt/[可读写层ID]/test），始终是空的。不过，由于Docker一开始还是要创建/test这个目录作为挂载点，所以执行了docker commit之后，你会发现新产生的镜像里，会多出来一个空的/test目录，虽然内容是空的。
+
+## 发布容器
+
+### Dockerfile 
+
+以用Docker部署一个用Python编写的Web应用为例。
+
+这个应用的代码部分（app.py）非常简单：
+
+~~~python
+from flask import Flask
+import socket
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    html = "<h3>Hello {name}!</h3>" \
+           "<b>Hostname:</b> {hostname}<br/>"           
+    return html.format(name=os.getenv("NAME", "world"), hostname=socket.gethostname())
+    
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=80)
+~~~
+
+在这段代码中，我使用Flask框架启动了一个Web服务器，而它唯一的功能是：如果当前环境中有“NAME”这个环境变量，就把它打印在“Hello”之后，否则就打印“Hello world”，最后再打印出当前环境的hostname。
+
+这个应用的依赖，则被定义在了同目录下的requirements.txt文件里，内容如下所示：
+
+~~~
+$ cat requirements.txt
+Flask
+~~~
+
+将应用容器化的第一步就是制作容器镜像，Docker提供了一种便捷的方式叫Dockerfile，如下图所示：
+
+~~~dockerfile
+# 使用官方提供的Python开发镜像作为基础镜像
+FROM python:2.7-slim
+
+# 将工作目录切换为/app
+WORKDIR /app
+
+# 将当前目录下的所有内容复制到/app下
+ADD . /app
+
+# 使用pip命令安装这个应用所需要的依赖
+RUN pip install --trusted-host pypi.python.org -r requirements.txt
+
+# 允许外界访问容器的80端口
+EXPOSE 80
+
+# 设置环境变量
+ENV NAME World
+
+# 设置容器进程为：python app.py，即：这个Python应用的启动命令
+CMD ["python", "app.py"]
+~~~
+
+DockerFile使用一些标准的原语（即大写高亮的词语），描述我们所要构建的Docker镜像。并且这些原语，都是按顺序处理的。
+
+比如FROM原语，指定了“python:2.7-slim”这个官方维护的基础镜像，从而免去了安装Python等语言环境的操作。否则，这一段我们就得这么写了： 
+
+~~~
+FROM ubuntu:latest
+RUN apt-get update -yRUN apt-get install -y python-pip python-dev build-essential
+...
+~~~
+
+其中，RUN原语就是在容器里执行shell命令的意思。 
+
+WORKDIR的意思是，Dockerfile后面的操作都以这一句指定的/app目录作为当前目录 
+
+最后的CMD，意思是Dockerfile指定python app.py为这个容器的进程。这里，app.py的实际路径是/app/app.py。所以，CMD ["python", "app.py"]等价于"docker run \<image\> python app.py"。
+
+在使用Dockerfile时，还有一个重要的原语是ENTRYPOINT，它和CMD都是Docker容器进程启动所必需的参数，完整的命令执行格式是：“ENTRYPOINT CMD” 。默认情况下，Docker会为你提供一个隐含的ENTRYPOINT，即：/bin/sh -c ，所以运行在容器里的完整进程是这样的：
+
+~~~
+/bin/sh -c "python app.py"
+~~~
+
+ENTRYPOINT被称为Docker容器的启动进程。
+
+需要注意的是，Dockerfile里的原语并不都是指对容器内部的操作。就比如ADD，它指的是把当前目录（即Dockerfile所在的目录）里的文件，复制到指定容器内的目录当中。 
+
+### 启动容器
+
+把DockerFile本身和用到的文件都放到一个目录：
+
+~~~
+$ ls
+Dockerfile  app.py   requirements.txt
+~~~
+
+接下来就可以制作Docker镜像了：
+
+~~~
+$ docker build -t helloworld .
+~~~
+
+其中，-t的作用是给这个镜像加一个Tag。docker build会自动加载当前目录下的Dockerfile文件，然后按照顺序，执行文件中的原语。而这个过程，实际上可以等同于Docker使用基础镜像启动了一个容器，然后在容器中依次执行Dockerfile中的原语。 
+
+Dockerfile中的每个原语执行后，都会生成一个对应的镜像层。即使原语本身并没有明显地修改文件的操作（比如，ENV原语），它对应的层也会存在。只不过在外界看来，这个层是空的。
+
+docker build操作完成后，我可以通过docker images命令查看结果： 
+
+~~~
+$ docker image ls
+
+REPOSITORY            TAG                 IMAGE ID
+helloworld         latest              653287cdf998
+~~~
+
+通过这个镜像ID，就可以查看这些新增的层在AuFS路径下对应的文件和目录了。 
+
+接下来使用这个镜像来启动容器：
+
+~~~
+$ docker run -p 4000:80 helloworld
+~~~
+
+在这一句命令中，镜像名helloworld后面，我什么都不用写，因为在Dockerfile中已经指定了CMD。否则，我就得把进程的启动命令加在后面： 
+
+~~~
+$ docker run -p 4000:80 helloworld python app.py
+~~~
+
+容器启动之后，我可以使用docker ps命令看到： 
+
+~~~
+$ docker ps
+CONTAINER ID        IMAGE               COMMAND             CREATED
+4ddf4638572d        helloworld       "python app.py"     10 seconds ago
+~~~
+
+通过-p 4000:80告诉了Docker，请把容器内的80端口映射在宿主机的4000端口上。 
+
+这样做的目的是，只要访问宿主机的4000端口，我就可以看到容器里应用返回的结果： 
+
+~~~
+$ curl http://localhost:4000
+<h3>Hello World!</h3><b>Hostname:</b> 4ddf4638572d<br/>
+~~~
+
+否则，我就得先用docker inspect命令查看容器的IP地址，然后访问“http://<容器IP地址>:80”才可以看到容器内应用的返回。 
+
+### docker exec
+
+使用docker exec命令可以进入容器然后完成一些操作：
+
+~~~
+$ docker exec -it 4ddf4638572d /bin/sh
+~~~
+
+之所以能完成这样的操作，也是基于Namespace的原理。
+
+Linux Namespace创建的隔离空间虽然看不见摸不着，但一个进程的Namespace信息在宿主机上是确确实实存在的，并且是以一个文件的方式存在。比如，通过如下指令，你可以看到当前正在运行的Docker容器的进程号（PID）是25686： 
+
+~~~
+$ docker inspect --format '{{ .State.Pid }}'  4ddf4638572d
+25686
+~~~
+
+这时，你可以通过查看宿主机的proc文件，看到这个25686进程的所有Namespace对应的文件： 
+
+~~~bash
+$ ls -l  /proc/25686/ns
+total 0
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 cgroup -> cgroup:[4026531835]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 ipc -> ipc:[4026532278]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 mnt -> mnt:[4026532276]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 net -> net:[4026532281]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 pid -> pid:[4026532279]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 pid_for_children -> pid:[4026532279]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 user -> user:[4026531837]
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 uts -> uts:[4026532277]
+~~~
+
+可以看到，一个进程的每种Linux Namespace，都在它对应的/proc/[进程号]/ns下有一个对应的虚拟文件，并且链接到一个真实的Namespace文件上。 
+
+这也就意味着：一个进程，可以选择加入到某个进程已有的Namespace当中，从而达到“进入”这个进程所在容器的目的，这正是docker exec的实现原理。
+
+而这个操作所依赖的，乃是一个名叫setns()的Linux系统调用。它的调用方法，我可以用如下一段小程序为你说明： 
+
+~~~c
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <sched.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#define errExit(msg) do { perror(msg); exit(EXIT_FAILURE);} while (0)
+
+int main(int argc, char *argv[]) {
+    int fd;
+    
+    fd = open(argv[1], O_RDONLY);
+    if (setns(fd, 0) == -1) {
+        errExit("setns");
+    }
+    execvp(argv[2], &argv[2]); 
+    errExit("execvp");
+}
+~~~
+
+这段代码功能非常简单：它一共接收两个参数，第一个参数是argv[1]，即当前进程要加入的Namespace文件的路径，比如/proc/25686/ns/net；而第二个参数，则是你要在这个Namespace里运行的进程，比如/bin/bash。
+
+这段代码的核心操作，则是通过open()系统调用打开了指定的Namespace文件，并把这个文件的描述符fd交给setns()使用。在setns()执行后，当前进程就加入了这个文件对应的Linux Namespace当中了。
+
+编译执行一下这个程序，加入到容器进程（PID=25686）的Network Namespace中： 
+
+~~~bash
+$ gcc -o set_ns set_ns.c 
+$ ./set_ns /proc/25686/ns/net /bin/bash 
+$ ifconfig
+eth0      Link encap:Ethernet  HWaddr 02:42:ac:11:00:02  
+          inet addr:172.17.0.2  Bcast:0.0.0.0  Mask:255.255.0.0
+          inet6 addr: fe80::42:acff:fe11:2/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:12 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:10 errors:0 dropped:0 overruns:0 carrier:0
+	   collisions:0 txqueuelen:0 
+          RX bytes:976 (976.0 B)  TX bytes:796 (796.0 B)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+	  collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+~~~
+
+正如上所示，当我们执行ifconfig命令查看网络设备时，看到的是前面启动的Docker容器里的网卡。也就是说，我新创建的这个/bin/bash进程，由于加入了该容器进程（PID=25686）的Network Namepace，它看到的网络设备与这个容器里是一样的，即：/bin/bash进程的网络设备视图，也被修改了。 
+
+而一旦一个进程加入到了另一个Namespace当中，在宿主机的Namespace文件上，也会有所体现。 假如刚刚执行的bash进程号是28499，可以查看该进程的namespace信息：
+
+~~~
+$ ls -l /proc/28499/ns/net
+lrwxrwxrwx 1 root root 0 Aug 13 14:18 /proc/28499/ns/net -> net:[4026532281]
+
+$ ls -l  /proc/25686/ns/net
+lrwxrwxrwx 1 root root 0 Aug 13 14:05 /proc/25686/ns/net -> net:[4026532281]
+~~~
+
+在/proc/[PID]/ns/net目录下，这个PID=28499进程，与我们前面的Docker容器进程（PID=25686）指向的Network Namespace文件完全一样。这说明这两个进程，共享了这个名叫net:[4026532281]的Network Namespace。 
+
+Docker还专门提供了一个参数，可以让你启动一个容器并“加入”到另一个容器的Network Namespace里，这个参数就是-net，比如: 
+
+~~~
+$ docker run -it --net container:4ddf4638572d busybox ifconfig
+~~~
+
+这样，我们新启动的这个容器，就会直接加入到ID=4ddf4638572d的容器，也就是我们前面的创建的Python应用容器（PID=25686）的Network Namespace中。 而如果我指定–net=host，就意味着这个容器不会为进程启用Network Namespace。这就意味着，这个容器拆除了Network Namespace的“隔离墙”，所以，它会和宿主机上的其他普通进程一样，直接共享宿主机的网络栈。这就为容器直接操作和使用宿主机网络提供了一个渠道。 
+
+### 上传镜像
+
+为了能上传镜像，首先需要注册一个Docker Hub账号，然后使用docker login命令登录
+
+接下来，我要用docker tag命令给容器镜像起一个完整的名字：
+
+~~~
+$ docker tag helloworld geektime/helloworld:v1
+~~~
+
+其中，geektime是我在Docker Hub上的用户名，它的“学名”叫镜像仓库（Repository）；“/”后面的helloworld是这个镜像的名字，而“v1”则是我给这个镜像分配的版本号。 
+
+然后执行docker push上传镜像到Docker Hub：
+
+~~~
+$ docker push geektime/helloworld:v1
+~~~
+
+此外，我还可以使用docker commit指令，把一个正在运行的容器，直接提交为一个镜像。一般来说，需要这么操作原因是：这个容器运行起来后，我又在里面做了一些操作，并且要把操作结果保存到镜像里，比如： 
+
+~~~bash
+$ docker exec -it 4ddf4638572d /bin/sh
+# 在容器内部新建了一个文件
+root@4ddf4638572d:/app# touch test.txt
+root@4ddf4638572d:/app# exit
+
+#将这个新建的文件提交到镜像中保存
+$ docker commit 4ddf4638572d geektime/helloworld:v2
+~~~
+
+docker commit，实际上就是在容器运行起来后，把最上层的“可读写层”，加上原先容器镜像的只读层，打包组成了一个新的镜像。当然，下面这些只读层在宿主机上是共享的，不会占用额外的空间。 
+
+打包新的镜像之后，也可以将它推送到Docker Hub上：
+
+~~~
+$ docker push geektime/helloworld:v2
+~~~
+
+综上，这个容器就是由这些要素构成的：
+
+![下载1](下载1.png)
+
+这个容器进程“python app.py”，运行在由Linux Namespace和Cgroups构成的隔离环境里；而它运行所需要的各种文件，比如python，app.py，以及整个操作系统文件，则由多个联合挂载在一起的rootfs层提供。
+
+这些rootfs层的最下层，是来自Docker镜像的只读层。
+
+在只读层之上，是Docker自己添加的Init层，用来存放被临时修改过的/etc/hosts等文件。
+
+而rootfs的最上层是一个可读写层，它以Copy-on-Write的方式存放任何对只读层的修改，容器声明的Volume的挂载点，也出现在这一层。
+
+## Kubernetes架构
+
+![下载2](下载2.png)
