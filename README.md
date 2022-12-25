@@ -12,6 +12,8 @@
 
 * [Effective Java](docs/Java/effectiveJava/effectivejava.md)
 
+* [设计模式](docs/设计模式/设计模式/设计模式.md)
+
 * [Spring](docs/Spring/Spring基础/Spring.md)
 
 * [SpringMVC](docs/SpringMVC/SpringMVC基础/SpringMVC.md)
