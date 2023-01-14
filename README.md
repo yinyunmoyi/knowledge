@@ -40,6 +40,8 @@
 
 * [计算机组成原理](./docs/OS/计算机组成基础/计算机组成原理.md)
 
+* [数据结构与算法](./docs/OS/数据结构和算法基础/数据结构和算法.md)
+
 * [Linux基础](./docs/OS/Linux/linux基础.md)
 
 * [Linux问题定位](./docs/OS/Linux问题定位/linux定位问题.md)
