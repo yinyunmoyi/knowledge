@@ -14,7 +14,7 @@
 
 * [设计模式](docs/设计模式/设计模式/设计模式.md)
 
-* [设计模式](docs/架构/DDD/DDD.md)
+* [DDD](docs/架构/DDD/DDD.md)
 
 * [Spring](docs/Spring/Spring基础/Spring.md)
 
