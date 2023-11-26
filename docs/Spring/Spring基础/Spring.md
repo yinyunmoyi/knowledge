@@ -5031,5 +5031,21 @@ sequenceDiagram
 
 挂起事务的本质其实就是将事务封装信息中的connection置为空，将数据源信息清空，更新ThreadLocal中的数据，最后会将 ConnectionHolder 包装为一个 SuspendedResourcesHolder 之后返回了出去。开启事务时，SuspendedResourcesHolder 会被封装到事务状态中，当内层事务执行完成后，可以立刻将外层被挂起的事务取出，若存在被挂起的事务则会恢复，恢复的过程就是挂起的逆过程，外层的事务又重新被绑定到线程上。
 
+# 补充
 
+@Autowired 和 @Resource 的区别是什么？
+
+- @Autowired 是 Spring 提供的注解，@Resource 是 JDK 提供的注解。
+- Autowired 默认的注入方式为byType（根据类型进行匹配），当按类型注入失败时会改用byName，@Resource默认注入方式为 byName（根据名称进行匹配），如果按名称注入失败时会改用byType。
+- 当一个接口存在多个实现类的情况下，@Autowired 和@Resource都需要通过名称才能正确匹配到对应的 Bean。Autowired 可以通过 @Qualifier 注解来显式指定名称，@Resource可以通过 name 属性来显式指定名称。
+- @Autowired 支持在构造函数、方法、字段和参数上使用。@Resource 主要用于字段和方法上的注入，不支持在构造函数或参数上使用。
+
+Spring中使用的设计模式：
+
+- 工厂方法模式：BeanFactory 或 ApplicationContext通过getBean创建或者获取对象
+- 单例设计模式：Spring 中 bean 的默认作用域就是 singleton(单例)的，每次调用getBean都获取同一个对象
+- 代理模式：AOP就是基于动态代理的，被AOP增强的对象其实就是代理对象
+- 模版方法模式：JdbcTemplate
+- 观察者模式：Spring 事件驱动模型，ApplicationListener作为监听器，ApplicationEventPublisher作为事件的发布者
+- 适配器模式：在 Spring MVC 中，HandlerAdapter适配器处理器拿到HandlerExecutionChain，负责根据不同的执行器和拦截器，最终触发它们的执行
 

@@ -49,6 +49,10 @@ IO 多路复用模型，通过减少无效的系统调用，减少了对 CPU 资
 
   ![QQ图片20220810204543](QQ图片20220810204543.png)
 
+为什么多路复用一定要搭配非阻塞API？
+
+因为多路复用只会告诉你 fd 对应的 socket 可读了，但不会告诉你有多少的数据可读，所以根本不知道下一次 read/accept 会不会发生阻塞
+
 BIO、NIO、AIO 使用场景分析：
 
 * BIO 方式适用于连接数目比较小且固定的架构，这种方式对服务器资源要求比较高，并发局限于应用中，JDK1.4 以前的唯一选择，但程序简单易理解。
@@ -4807,23 +4811,23 @@ public class ClientBootstrap {
 
 在服务器端，收到客户端发来的消息后，将消息拆解，去掉固定前缀后，拿到方法入参，然后调用真正的方法，拿到方法调用结果后，再返回到客户端。
 
+# 补充
 
+1、无论是解码器还是编码器handler，handler接受的消息类型必须与待处理消息类型一致，否则该handler不会被执行。
 
+2、Netty使用HTTP长连接
 
+ServerBootstrap启动对象调用childOption方法设置keepalive
 
+3、Netty中的零拷贝
 
+一般有以下几种方式：
 
-
-
-
-
-
-
-无论是解码器还是编码器handler，handler接受的消息类型必须与待处理消息类型一致，否则该handler不会被执行。
-
-
-
-
+1. Netty的接收和发送都采用DIRECT BUFFERS，对应系统底层的mmap机制，直接使用堆外内存进行Socket读写，如果使用传统的JVM的堆内存（Heap Buffer）进行socker读写，那么JVM将会将堆内存拷贝一份到直接内存中，然后在写入socket中，Netty不需要进行字节缓冲区的二次拷贝
+2. 使用 Netty 提供的 CompositeByteBuf 类, 可以将多个ByteBuf 合并为一个逻辑上的 ByteBuf, 避免了各个 ByteBuf 之间的拷贝。
+3. 通过 Unpooled.wrappedBuffer 可以将 byte 数组包装成 ByteBuf 对象，包装过程中不会产生内存拷贝。
+4. ByteBuf 支持 slice 操作, 因此可以将 ByteBuf 分解为多个共享同一个存储区域的 ByteBuf, 避免了内存的拷贝。
+5. 通过 FileRegion 包装的FileChannel#tranferTo() 实现文件传输, 可以直接将文件缓冲区的数据发送到目标 Channel, 避免了传统通过循环 write 方式导致的内存拷贝问题.
 
 
 

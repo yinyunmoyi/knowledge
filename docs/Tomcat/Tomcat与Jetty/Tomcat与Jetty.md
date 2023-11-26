@@ -2310,6 +2310,11 @@ Jetty 在 Java 原生 Selector 的基础上封装了自己的 Selector，叫作 
 
 基于上面的思路，因此 Jetty 的 Connector 做了一个大胆尝试，那就是用把 I/O 事件的生产和消费放到同一个线程来处理。两个任务由同一个线程来执行，如果执行过程中线程不阻塞，操作系统会用同一个 CPU 核来执行这两个任务，这样就能利用 CPU 缓存了。
 
+其实无论read/write放在从reactor线程，还是放在工作线程池中，都算作是主从reactor模式的一种，两种各有自己的好处：
+
+* 如果read/write放在从reactor线程，那么从reactor线程读取网络数据的效率会很高，能充分利用CPU缓存的优势
+* 如果read/write放在工作线程池中，那么遇到大量数据read/write的情况就不会阻塞从reactor线程对读写事件的监听了
+
 ManagedSelector 的本质就是一个 Selector，负责 I/O 事件的检测和分发，Jetty 在 Java 原生的 Selector 上做了一些扩展，就变成了 ManagedSelector。
 
 线程执行策略的关键类是 ExecutionStrategy 接口：
@@ -2883,7 +2888,11 @@ sysctl net.ipv4.tcp_available_congestion_control
 sysctl -w net.ipv4.tcp_congestion_control = cubic
 ~~~
 
+# 补充
 
+1、tomcat是如何创建servlet的？
+
+当容器启动时，会读取在webapps目录下所有的web应用中的web.xml文件，然后对xml文件进行解析，并读取servlet注册信息。然后，将每个应用中注册的Servlet类都进行加载，并通过反射的方式实例化。(有时候也是在第一次请求时实例化)。
 
 
 
