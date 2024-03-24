@@ -616,6 +616,58 @@ $ git log --graph --pretty=oneline --abbrev-commit
 
 最后我们可以再用push操作推送到远程。
 
+rebase和merge的区别是：rebase是将其他分支的改动重放到本分支，重放时就像在本分支开发一样，但是如果是merge，则合并两个分支，新的节点此时就有两个父节点。
+
+在bugFix分支执行了git rebase main的情况，c3原来是rebase的提交：
+
+![11](11.png)
+
+在main分支执行git merge bugFix的情况：
+
+![QQ图片20240323223818](QQ图片20240323223818.png)
+
+rebase还可以进行交互式的，加-i：
+
+```
+git rebase -i HEAD~4
+```
+
+它代表重放之前4步的提交，会出现一个交互对话框，可以随意调整这4步提交的顺序，或者删除某一步。
+
+例如原来是C1-C2-C3-C4-C5，HEAD是指向C5的
+
+如果执行上面这条命令，就可以对C2到C5四次提交进行重放，可以选择倒放：C1-C5-C4-C3-C2-C1，也可以去掉提交中的某一个：C1-C2-C3-C5
+
+## 移动分支
+
+git checkout xx 代表让git 的HEAD指向xx这次提交，xx是一个哈希值，还有相对定位的方法：
+
+* git checkout main^代表切换HEAD到main的parent节点，两个^则代表父节点的父节点。
+* git checkout HEAD~4代表向上回退4格
+
+修改HEAD引用可以移动分支，如将 main 分支强制指向 HEAD 的第 3 级 parent 提交：
+
+```
+git branch -f main HEAD~3
+```
+
+## 回退分支
+
+回退有两种方式：reset和revert
+
+* git reset HEAD~1：代表回退1次来撤销修改
+* git revert HEAD：代表回退最新的一次提交，它会在现在的基础上再提交一次，作为回退提交的修改
+
+想要影响远程分支，只能使用revert
+
+## 任意提交
+
+下面这个命令可以直接将提交复制到当前HEAD位置：
+
+```
+git cherry-pick <提交号>...
+```
+
 # 标签
 
 发布一个版本时，我们通常先在版本库中打一个标签，这个标签是版本库的一个快照。它实际上是指向某个commit的指针，类似于分支，但是分支是可以移动的，标签是固定的。
