@@ -3975,3 +3975,107 @@ func TestPalindrome(t *testing.T) {
 go test命令后面可以跟一个目录，代表测试目录对应的包，也可以不指定参数，代表采用当前目录对应的包。
 
 有时会出现这样的场景：包A使用包B的基础功能，此时包B的其中一个测试程序是引入包A来测试A使用B的场景，这时会导致包的循环依赖，会导致编译不通过。为了解决这个问题，可以在包B同目录声明一个xxx_test包，包名的`_test`后缀告诉go test工具它应该建立一个额外的包来运行测试。这个xxx_test包此时就相当于一个独立的包了，它同时可以使用包A和包B，所以可以导入他们进行测试。在设计层面，外部测试包是在所有它依赖的包的上层。
+
+## 泛型
+
+Go 1.18 新增了一个重大的语言特性：泛型。
+
+几个适用于泛型的场景：
+
+1、不依赖于具体类型的操作容器的函数
+
+~~~go
+// MapKeys returns a slice of all the keys in m.
+// The keys are not returned in any particular order.
+func MapKeys[Key comparable, Val any](m map[Key]Val) []Key {
+    s := make([]Key, 0, len(m))
+    for k := range m {
+        s = append(s, k)
+    }
+    return s
+}
+~~~
+
+2、编写通用数据结构时，如链表或者二叉树
+
+在之前，这样的数据结构要么使用硬编码（只支持某一种特定类型），要么用interface{}
+
+现在就可以用泛型来实现它了，它可以让数据存储更高效，节省内存资源，避免类型断言，并在编译时进行类型检查
+
+例如实现二叉树：
+
+~~~go
+// Tree is a binary tree.
+type Tree[T any] struct {
+    cmp  func(T, T) int
+    root *node[T]
+}
+
+// A node in a Tree.
+type node[T any] struct {
+    left, right  *node[T]
+    val          T
+}
+
+// find returns a pointer to the node containing val,
+// or, if val is not present, a pointer to where it
+// would be placed if added.
+func (bt *Tree[T]) find(val T) **node[T] {
+    pl := &bt.root
+    for *pl != nil {
+        switch cmp := bt.cmp(val, (*pl).val); {
+        case cmp < 0:
+            pl = &(*pl).left
+        case cmp > 0:
+            pl = &(*pl).right
+        default:
+            return pl
+        }
+    }
+    return pl
+}
+
+// Insert inserts val into bt if not already there,
+// and reports whether it was inserted.
+func (bt *Tree[T]) Insert(val T) bool {
+    pl := bt.find(val)
+    if *pl != nil {
+        return false
+    }
+    *pl = &node[T]{val: val}
+    return true
+}
+~~~
+
+在上面的例子中，定义Tree需要定义一个比较函数cmp，它在find方法内部比较时使用。Go语言更推荐使用函数替代方法，而不是要求元素必须实现`Compare` 或 `Less` 方法，因为这会使想要使用简单数据类型（如 `int`）的人都必须定义自己的整数类型并编写对应的方法。
+
+3、实现通用的方法
+
+不同类型需要实现一些共同的方法，而且实现相同时。例如下面的例子，会使用考虑标准库的 `sort.Interface`完成slice的排序：
+
+~~~go
+// SliceFn implements sort.Interface for a slice of T.
+type SliceFn[T any] struct {
+    s    []T
+    less func(T, T) bool
+}
+
+func (s SliceFn[T]) Len() int {
+    return len(s.s)
+}
+func (s SliceFn[T]) Swap(i, j int) {
+    s.s[i], s.s[j] = s.s[j], s.s[i]
+}
+func (s SliceFn[T]) Less(i, j int) bool {
+    return s.less(s.s[i], s.s[j])
+}
+~~~
+
+对于任何 slice 类型，`Len` 和 `Swap` 方法都是完全相同的。 `Less` 方法需要一个比较函数，在定义时需要传入。
+
+你应该避免使用 type parameter，直到你注意到你需要多次编写完全相同的代码。
+
+
+
+
+
